@@ -1,0 +1,851 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"><meta name="apple-mobile-web-app-title" content="Prompter"><meta name="theme-color" content="#0b0d10"><link rel="apple-touch-icon" href="icon.png"><style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0;font:14px system-ui,sans-serif}img{max-width:100%}[hidden]{display:none!important}</style></head><body><title>NHE Prompter</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Space+Grotesk:wght@500;600&display=swap">
+<style>
+/* Layout: two screens. Script editor, then a full-screen camera with the
+   script panel pinned to the top edge (near the lens) and controls at the bottom. */
+:root {
+  --ground: #0b0d10;
+  --surface: #161a1f;
+  --surface-2: #20262d;
+  --line: #2c333b;
+  --text: #eef1f4;
+  --muted: #98a2ad;
+  --accent: #ffb547;      /* reading line, needle, primary actions */
+  --accent-ink: #1d1406;
+  --rec: #ff453a;         /* recording state only */
+  --font-read: "Atkinson Hyperlegible", "Helvetica Neue", Arial, sans-serif;
+  --font-ui: "Space Grotesk", -apple-system, "Segoe UI", sans-serif;
+  color-scheme: dark;
+}
+html, body { height: 100%; }
+body {
+  background: var(--ground);
+  color: var(--text);
+  font-family: var(--font-ui);
+  -webkit-tap-highlight-color: transparent;
+  overscroll-behavior: none;
+}
+button { font: inherit; color: inherit; }
+button:focus-visible, textarea:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* ---------- Script editor ---------- */
+.editor {
+  min-height: 100%;
+  box-sizing: border-box;
+  display: flex; flex-direction: column; gap: 14px;
+  max-width: 720px; margin: 0 auto;
+  padding-block: 20px 24px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+.brand { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.brand h1 { margin: 0; font-size: 22px; font-weight: 600; letter-spacing: -0.01em; }
+.brand h1 span { color: var(--accent); }
+.brand small { color: var(--muted); font-size: 13px; }
+.hint { margin: 0; color: var(--muted); font-size: 14px; line-height: 1.45; }
+.hint code { font-family: var(--font-read); color: var(--text); background: var(--surface-2); padding: 1px 5px; border-radius: 4px; }
+#script {
+  flex: 1; min-height: 46vh; width: 100%; box-sizing: border-box;
+  resize: vertical;
+  background: var(--surface); color: var(--text);
+  border: 1px solid var(--line); border-radius: 14px;
+  padding: 14px; font-family: var(--font-read); font-size: 18px; line-height: 1.5;
+}
+.stats { display: flex; gap: 14px; flex-wrap: wrap; color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; }
+.row { display: flex; gap: 10px; flex-wrap: wrap; }
+.btn {
+  border: 1px solid var(--line); background: var(--surface-2);
+  border-radius: 12px; padding: 12px 16px; font-size: 15px; font-weight: 500;
+  cursor: pointer;
+}
+.btn.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 600; flex: 1; }
+.btn.danger { color: var(--rec); }
+.btn:disabled { opacity: .45; }
+
+/* ---------- Prompter ---------- */
+.prompter { position: fixed; inset: 0; background: #000; overflow: hidden; }
+#cam {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  object-fit: cover; background: #000;
+}
+#cam.mirror { transform: scaleX(-1); }
+.nocam {
+  position: absolute; left: 0; right: 0; bottom: 38%;
+  text-align: center; color: var(--muted); font-size: 14px; line-height: 1.5;
+  padding-left: max(24px, env(safe-area-inset-left, 0px));
+  padding-right: max(24px, env(safe-area-inset-right, 0px));
+}
+.panel {
+  position: absolute; left: 0; right: 0; top: 0;
+  height: calc(var(--ph, 48) * 1%);
+  background: rgba(0, 0, 0, var(--dim, .6));
+  padding-top: env(safe-area-inset-top, 0px);
+  box-sizing: border-box;
+}
+#scroller {
+  position: absolute; left: 0; right: 0; bottom: 0;
+  top: env(safe-area-inset-top, 0px);
+  overflow-y: auto; -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 16%, #000 86%, transparent 100%);
+          mask-image: linear-gradient(to bottom, transparent 0, #000 16%, #000 86%, transparent 100%);
+}
+#scroller::-webkit-scrollbar { display: none; }
+#flow {
+  max-width: 760px; margin: 0 auto; box-sizing: border-box;
+  padding-left: max(28px, env(safe-area-inset-left, 0px));
+  padding-right: max(20px, env(safe-area-inset-right, 0px));
+  font-family: var(--font-read);
+  font-size: calc(var(--fs, 34) * 1px);
+  line-height: 1.32; font-weight: 700;
+  color: var(--text);
+  text-shadow: 0 1px 3px rgba(0,0,0,.6);
+}
+#flow p { margin: 0 0 .7em; }
+#flow .w.said { color: var(--muted); }
+#flow .cue { color: var(--accent); font-weight: 400; font-style: italic; font-size: .7em; }
+.readline {
+  position: absolute; left: 0; right: 0; height: 0; pointer-events: none;
+}
+.readline::before {
+  content: ""; position: absolute; left: max(6px, env(safe-area-inset-left, 0px)); top: -9px;
+  border-left: 13px solid var(--accent); border-top: 9px solid transparent; border-bottom: 9px solid transparent;
+}
+.readline::after {
+  content: ""; position: absolute; left: 0; right: 0; top: 0; border-top: 1px dashed rgba(255,181,71,.35);
+}
+.count {
+  position: absolute; left: 0; right: 0; top: 40%; text-align: center;
+  font-size: 96px; font-weight: 600; color: var(--accent); text-shadow: 0 2px 16px rgba(0,0,0,.6);
+  pointer-events: none;
+}
+
+.dock {
+  position: absolute; left: 0; right: 0; bottom: 0;
+  padding-top: 10px;
+  padding-bottom: max(14px, env(safe-area-inset-bottom, 0px));
+  padding-left: max(14px, env(safe-area-inset-left, 0px));
+  padding-right: max(14px, env(safe-area-inset-right, 0px));
+  background: linear-gradient(to top, rgba(0,0,0,.78) 55%, rgba(0,0,0,0));
+  display: flex; flex-direction: column; gap: 10px;
+}
+.status { display: flex; justify-content: space-between; align-items: center; font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; min-height: 20px; }
+.recpill { display: inline-flex; align-items: center; gap: 6px; color: var(--text); font-weight: 600; }
+.recpill i { width: 9px; height: 9px; border-radius: 50%; background: var(--rec); animation: blink 1.2s infinite; }
+@keyframes blink { 50% { opacity: .25; } }
+.speedrow { display: flex; align-items: center; gap: 8px; }
+.speedval { min-width: 74px; text-align: center; font-size: 13px; color: var(--muted); line-height: 1.1; }
+.speedval b { display: block; font-size: 20px; color: var(--text); font-variant-numeric: tabular-nums; }
+.dial {
+  position: relative; flex: 1; height: 46px; border-radius: 23px;
+  background-color: rgba(255,255,255,.08);
+  background-image:
+    linear-gradient(90deg, rgba(255,255,255,.75) 0 2px, transparent 2px),
+    linear-gradient(90deg, rgba(255,255,255,.35) 0 2px, transparent 2px);
+  background-size: 70px 22px, 14px 12px;
+  background-repeat: repeat-x;
+  background-position: var(--dx, 50%) center, var(--dx, 50%) center;
+  touch-action: none; cursor: ew-resize; overflow: hidden;
+}
+.dial::after { content: ""; position: absolute; left: calc(50% - 1px); top: 6px; bottom: 6px; width: 3px; border-radius: 2px; background: var(--accent); margin-left: -0.5px; }
+.dial.voice { opacity: .35; }
+.step { width: 40px; height: 40px; border-radius: 50%; border: 0; background: rgba(255,255,255,.12); font-size: 22px; line-height: 1; cursor: pointer; }
+.controls { display: grid; grid-template-columns: 1fr 1fr auto 1fr 1fr; align-items: center; justify-items: center; }
+.ctl { display: flex; flex-direction: column; align-items: center; gap: 3px; background: none; border: 0; font-size: 11px; color: var(--muted); cursor: pointer; padding: 4px; min-width: 56px; }
+.ctl svg { width: 26px; height: 26px; color: var(--text); }
+.ctl.on svg { color: var(--accent); }
+.ctl:disabled { opacity: .35; }
+.recbtn {
+  width: 76px; height: 76px; border-radius: 50%; border: 4px solid #fff; background: none; padding: 0; cursor: pointer;
+  display: grid; place-items: center;
+}
+.recbtn i { width: 58px; height: 58px; border-radius: 50%; background: var(--rec); transition: all .18s ease; }
+.recbtn.live i { width: 30px; height: 30px; border-radius: 7px; }
+.recbtn.confirm { border-color: var(--rec); }
+.recbtn:disabled { opacity: .4; }
+.toast {
+  position: absolute; left: 50%; transform: translateX(-50%); bottom: calc(200px + env(safe-area-inset-bottom, 0px));
+  max-width: min(90vw, 420px); box-sizing: border-box;
+  background: rgba(22,26,31,.94); border: 1px solid var(--line); border-radius: 12px;
+  padding: 10px 14px; font-size: 14px; line-height: 1.4; text-align: center;
+}
+
+/* ---------- Sheets ---------- */
+.sheet-back { position: fixed; inset: 0; background: rgba(0,0,0,.5); z-index: 20; }
+.sheet {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 21;
+  max-height: 88%; overflow-y: auto;
+  background: var(--surface); border-radius: 20px 20px 0 0; border-top: 1px solid var(--line);
+  padding-top: 16px;
+  padding-bottom: max(20px, env(safe-area-inset-bottom, 0px));
+  padding-left: max(18px, env(safe-area-inset-left, 0px));
+  padding-right: max(18px, env(safe-area-inset-right, 0px));
+  display: flex; flex-direction: column; gap: 16px;
+}
+.sheet h2 { margin: 0; font-size: 18px; font-weight: 600; display: flex; justify-content: space-between; align-items: center; }
+.sheet h2 button { background: none; border: 0; color: var(--accent); font-size: 15px; cursor: pointer; }
+.field { display: flex; flex-direction: column; gap: 6px; }
+.field label, .tog span { font-size: 14px; display: flex; justify-content: space-between; }
+.field label output { color: var(--muted); font-variant-numeric: tabular-nums; }
+.field small, .tog small { color: var(--muted); font-size: 12px; line-height: 1.4; }
+input[type=range] { width: 100%; accent-color: var(--accent); }
+.tog { display: grid; grid-template-columns: 1fr auto; gap: 2px 12px; align-items: center; }
+.tog input { width: 22px; height: 22px; accent-color: var(--accent); grid-row: 1 / span 2; grid-column: 2; }
+.seg { display: flex; background: var(--surface-2); border-radius: 10px; padding: 3px; gap: 3px; }
+.seg button { flex: 1; border: 0; background: none; border-radius: 8px; padding: 8px; font-size: 14px; cursor: pointer; color: var(--muted); }
+.seg button.on { background: var(--line); color: var(--text); }
+#takeVideo { width: 100%; max-height: 46vh; border-radius: 12px; background: #000; }
+.takeinfo { color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; }
+
+@media (prefers-reduced-motion: reduce) {
+  .recpill i { animation: none; }
+  .recbtn i { transition: none; }
+}
+</style>
+
+<!-- ============ Script editor ============ -->
+<section class="editor" id="editorView">
+  <div class="brand">
+    <h1>NHE <span>Prompter</span></h1>
+    <small id="saveNote">Saved on this phone</small>
+  </div>
+  <p class="hint">Paste your script below. Leave a blank line between paragraphs. Notes in brackets like <code>[smile]</code> show in gold and are skipped by voice follow.</p>
+  <textarea id="script" spellcheck="true" aria-label="Your script"></textarea>
+  <div class="stats" id="stats"></div>
+  <div class="row">
+    <button class="btn" id="sampleBtn" type="button">Load sample</button>
+    <button class="btn danger" id="clearBtn" type="button">Clear</button>
+    <button class="btn primary" id="goBtn" type="button">Open camera</button>
+  </div>
+</section>
+
+<!-- ============ Prompter ============ -->
+<section class="prompter" id="prompterView" hidden>
+  <video id="cam" playsinline autoplay muted></video>
+  <div class="nocam" id="nocam" hidden></div>
+
+  <div class="panel" id="panel">
+    <div id="scroller"><div id="flow"></div></div>
+    <div class="readline" id="readline"></div>
+  </div>
+  <div class="count" id="count" hidden></div>
+  <div class="toast" id="toast" role="status" hidden></div>
+
+  <div class="dock">
+    <div class="status">
+      <span id="statusL">Ready</span>
+      <span id="statusR"></span>
+    </div>
+    <div class="speedrow">
+      <button class="step" id="slower" type="button" aria-label="Slower">&minus;</button>
+      <div class="dial" id="dial" role="slider" aria-label="Scroll speed" tabindex="0" aria-valuemin="1" aria-valuemax="30"></div>
+      <button class="step" id="faster" type="button" aria-label="Faster">+</button>
+      <div class="speedval" id="speedval"><b>10</b>speed</div>
+    </div>
+    <div class="controls">
+      <button class="ctl" id="editBtn" type="button">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M13.5 6.5l4 4"/></svg>Script</button>
+      <button class="ctl" id="topBtn" type="button">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4h14"/><path d="M12 20V9"/><path d="M7 13l5-5 5 5"/></svg>To top</button>
+      <button class="recbtn" id="recBtn" type="button" aria-label="Start recording"><i></i></button>
+      <button class="ctl" id="playBtn" type="button">
+        <svg id="playIcon" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg><span id="playLabel">Scroll</span></button>
+      <button class="ctl" id="setBtn" type="button">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg>Settings</button>
+    </div>
+  </div>
+</section>
+
+<!-- ============ Settings sheet ============ -->
+<div class="sheet-back" id="setBack" hidden></div>
+<section class="sheet" id="setSheet" hidden aria-label="Settings">
+  <h2>Settings <button type="button" id="setDone">Done</button></h2>
+  <div class="field">
+    <label for="fsIn">Text size <output id="fsOut"></output></label>
+    <input type="range" id="fsIn" min="20" max="64" step="1">
+  </div>
+  <div class="field">
+    <label for="phIn">Script area height <output id="phOut"></output></label>
+    <input type="range" id="phIn" min="30" max="70" step="1">
+    <small>A shorter area keeps your eyes closer to the camera lens.</small>
+  </div>
+  <div class="field">
+    <label for="dimIn">Background darkness <output id="dimOut"></output></label>
+    <input type="range" id="dimIn" min="0" max="90" step="5">
+  </div>
+  <label class="tog"><span>Mirror my preview</span><input type="checkbox" id="mirIn"><small>Only changes what you see. The saved video is never flipped.</small></label>
+  <label class="tog"><span>3 second countdown</span><input type="checkbox" id="cdIn"><small>Recording starts right away. The script waits 3 seconds before it moves.</small></label>
+  <label class="tog"><span>Voice follow (beta)</span><input type="checkbox" id="vfIn"><small>The script moves when you talk instead of at a set speed. Test it with a short take first. If the phone won't share the mic, it turns itself off and the speed dial takes over.</small></label>
+  <div class="field">
+    <label>Video quality</label>
+    <div class="seg" id="qSeg">
+      <button type="button" data-q="1080">1080p</button>
+      <button type="button" data-q="720">720p</button>
+    </div>
+    <small>720p makes smaller files for very long takes.</small>
+  </div>
+</section>
+
+<!-- ============ Take sheet ============ -->
+<div class="sheet-back" id="takeBack" hidden></div>
+<section class="sheet" id="takeSheet" hidden aria-label="Your take">
+  <h2>Your take <button type="button" id="takeClose">Back to camera</button></h2>
+  <video id="takeVideo" controls playsinline></video>
+  <div class="takeinfo" id="takeInfo"></div>
+  <div class="row">
+    <button class="btn primary" id="shareBtn" type="button">Save video</button>
+    <button class="btn" id="dlBtn" type="button">Download file</button>
+  </div>
+  <button class="btn danger" id="delBtn" type="button">Delete this take</button>
+</section>
+
+<script>
+(() => {
+  "use strict";
+  const $ = (id) => document.getElementById(id);
+
+  /* ---------- storage (convenience only) ---------- */
+  const store = {
+    get(k, d) { try { const v = localStorage.getItem("nhePrompter." + k); return v == null ? d : JSON.parse(v); } catch (e) { return d; } },
+    set(k, v) { try { localStorage.setItem("nhePrompter." + k, JSON.stringify(v)); return true; } catch (e) { return false; } }
+  };
+  const S = Object.assign({ speed: 10, fs: 34, ph: 48, dim: 60, mirror: true, countdown: true, voice: false, q: 1080 }, store.get("settings", {}));
+  const saveS = () => store.set("settings", S);
+
+  const SAMPLE = `Example script. Replace this with yours.
+
+Hey, it's Justin with the NHE Team. If you've been thinking about selling your home in Gilbert or Queen Creek this year, stick with me for the next sixty seconds.
+
+[smile]
+
+Here's what most sellers don't hear. The price you list at matters less than how you prepare, how you market, and how you handle the first two weeks on the market.
+
+Those first fourteen days are when buyers pay the most attention. Miss them and you end up chasing the market down.
+
+[pause]
+
+So before you call anyone, get a real number. Not a website guess. A real look at what homes like yours actually sold for in the last ninety days.
+
+That's exactly what I do for my sellers, and it costs you nothing. Send me a message and I'll put one together for your address.
+
+I'm Justin Roberts with the NHE Team, your Neighborhood Home Experts. Talk soon.`;
+
+  /* ---------- editor ---------- */
+  const scriptEl = $("script");
+  scriptEl.value = store.get("script", null) ?? SAMPLE;
+  let saveTimer = 0;
+  function updateStats() {
+    const words = (scriptEl.value.replace(/\[[^\]]*\]/g, " ").match(/[A-Za-z0-9'’]+/g) || []).length;
+    const mins = words / 150;
+    const m = Math.floor(mins), s = Math.round((mins - m) * 60);
+    $("stats").innerHTML = "";
+    [`${words} words`, `About ${m ? m + " min " : ""}${s} sec at a normal talking pace`].forEach(t => {
+      const sp = document.createElement("span"); sp.textContent = t; $("stats").appendChild(sp);
+    });
+  }
+  scriptEl.addEventListener("input", () => {
+    updateStats();
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(() => {
+      $("saveNote").textContent = store.set("script", scriptEl.value) ? "Saved on this phone" : "Not saved (private browsing)";
+    }, 400);
+  });
+  $("sampleBtn").onclick = () => { scriptEl.value = SAMPLE; scriptEl.dispatchEvent(new Event("input")); };
+  let clearArmed = 0;
+  $("clearBtn").onclick = () => {
+    if (Date.now() - clearArmed < 2500) { scriptEl.value = ""; scriptEl.dispatchEvent(new Event("input")); $("clearBtn").textContent = "Clear"; clearArmed = 0; scriptEl.focus(); return; }
+    clearArmed = Date.now(); $("clearBtn").textContent = "Tap again to clear";
+    setTimeout(() => { if (clearArmed && Date.now() - clearArmed >= 2400) { $("clearBtn").textContent = "Clear"; clearArmed = 0; } }, 2600);
+  };
+  updateStats();
+
+  /* ---------- script rendering ---------- */
+  const flow = $("flow"), scroller = $("scroller");
+  let M = [];   // matchable words: {el, n}
+  const norm = (w) => w.toLowerCase().replace(/[’']/g, "").replace(/[^a-z0-9]/g, "");
+  function renderScript() {
+    flow.textContent = "";
+    M = [];
+    const paras = scriptEl.value.replace(/\r/g, "").split(/\n\s*\n/).map(p => p.trim()).filter(Boolean);
+    if (!paras.length) paras.push("[Your script is empty. Tap Script to add one.]");
+    paras.forEach(p => {
+      const pe = document.createElement("p");
+      p.split(/(\[[^\]]*\])/).forEach(part => {
+        if (!part) return;
+        if (/^\[[^\]]*\]$/.test(part)) {
+          const c = document.createElement("span"); c.className = "cue"; c.textContent = part + " "; pe.appendChild(c); return;
+        }
+        part.split(/(\s+)/).forEach(tok => {
+          if (!tok) return;
+          if (/^\s+$/.test(tok)) {
+            if (tok.includes("\n")) pe.appendChild(document.createElement("br"));
+            else pe.appendChild(document.createTextNode(" "));
+            return;
+          }
+          const sp = document.createElement("span"); sp.className = "w"; sp.textContent = tok; pe.appendChild(sp);
+          const n = norm(tok);
+          if (n) { sp.dataset.i = M.length; M.push({ el: sp, n }); }
+        });
+      });
+      flow.appendChild(pe);
+    });
+    saidUpTo = 0;
+  }
+
+  /* ---------- layout ---------- */
+  let readY = 0;
+  function applyLook() {
+    const root = $("prompterView");
+    root.style.setProperty("--fs", S.fs);
+    root.style.setProperty("--ph", S.ph);
+    root.style.setProperty("--dim", (S.dim / 100).toFixed(2));
+    $("cam").classList.toggle("mirror", !!S.mirror);
+    requestAnimationFrame(layout);
+  }
+  function layout() {
+    const h = scroller.clientHeight;
+    if (!h) return;
+    const keep = anchorWord();
+    readY = Math.round(h * 0.3);
+    flow.style.paddingTop = readY + "px";
+    flow.style.paddingBottom = Math.max(0, h - readY - S.fs) + "px";
+    $("readline").style.top = (scroller.offsetTop + readY + S.fs * 0.66) + "px";
+    if (keep) jumpTo(keep, false);
+  }
+  window.addEventListener("resize", () => { if (!$("prompterView").hidden) layout(); });
+
+  // The word currently sitting on the reading line.
+  function anchorWord() {
+    if (!M.length) return null;
+    const top = scroller.getBoundingClientRect().top + readY;
+    let lo = 0, hi = M.length - 1;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (M[mid].el.getBoundingClientRect().bottom < top) lo = mid + 1; else hi = mid;
+    }
+    return M[lo].el;
+  }
+  function offsetFor(el) {
+    const r = el.getBoundingClientRect(), sr = scroller.getBoundingClientRect();
+    return scroller.scrollTop + (r.top - sr.top) - readY;
+  }
+
+  /* ---------- scroll engine ---------- */
+  let pos = 0, playing = false, lastT = 0, userUntil = 0, lastWrite = -1, dragging = false, target = null;
+  const pxPerSec = () => S.speed * S.fs * 0.1;
+  function write() {
+    const max = scroller.scrollHeight - scroller.clientHeight;
+    if (pos > max) pos = max;
+    if (pos < 0) pos = 0;
+    scroller.scrollTop = pos;
+    lastWrite = scroller.scrollTop;
+  }
+  function frame(t) {
+    const dt = lastT ? Math.min(0.1, (t - lastT) / 1000) : 0;
+    lastT = t;
+    if (!$("prompterView").hidden && !dragging && performance.now() > userUntil) {
+      if (voiceOn && playing) {
+        if (target != null && Math.abs(target - pos) > 0.5) { pos += (target - pos) * Math.min(1, dt * 5); write(); }
+      } else if (playing) {
+        const max = scroller.scrollHeight - scroller.clientHeight;
+        pos += pxPerSec() * dt;
+        if (pos >= max) { pos = max; write(); setPlaying(false); toast("End of script"); }
+        else write();
+      }
+    }
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+
+  scroller.addEventListener("scroll", () => {
+    if (Math.abs(scroller.scrollTop - lastWrite) > 1.5) {
+      userUntil = performance.now() + 450;
+      pos = scroller.scrollTop;
+      lastWrite = pos;
+      userMoved = true;
+    }
+  }, { passive: true });
+  scroller.addEventListener("touchstart", () => { dragging = true; }, { passive: true });
+  const endDrag = () => { dragging = false; userUntil = performance.now() + 450; pos = scroller.scrollTop; };
+  scroller.addEventListener("touchend", endDrag, { passive: true });
+  scroller.addEventListener("touchcancel", endDrag, { passive: true });
+  scroller.addEventListener("wheel", () => { userUntil = performance.now() + 450; }, { passive: true });
+
+  // Tap any word or paragraph to put it on the reading line.
+  flow.addEventListener("click", (e) => {
+    let el = e.target.closest(".w, .cue, p");
+    if (!el) return;
+    if (el.tagName === "P") el = el.querySelector(".w") || el;
+    jumpTo(el, true);
+  });
+  function jumpTo(el, fromUser) {
+    pos = offsetFor(el);
+    write();
+    target = pos;
+    if (fromUser) { userUntil = performance.now() + 250; userMoved = true; }
+  }
+  $("topBtn").onclick = () => { pos = 0; write(); target = 0; userMoved = true; resetSaid(); };
+
+  function setPlaying(on) {
+    playing = on;
+    $("playBtn").classList.toggle("on", on);
+    $("playLabel").textContent = on ? "Pause" : "Scroll";
+    $("playIcon").innerHTML = on ? '<path d="M7 5h4v14H7zM13 5h4v14h-4z"/>' : '<path d="M8 5v14l11-7z"/>';
+    if (on) target = pos;
+    if (voiceOn) { on ? startVoice() : stopVoice(); }
+    updateStatus();
+  }
+  $("playBtn").onclick = () => { cancelCountdown(); setPlaying(!playing); };
+
+  /* ---------- speed dial ---------- */
+  const dial = $("dial");
+  function setSpeed(v) {
+    S.speed = Math.min(30, Math.max(1, Math.round(v * 2) / 2));
+    dial.style.setProperty("--dx", `calc(50% - ${S.speed * 14}px)`);
+    dial.setAttribute("aria-valuenow", S.speed);
+    $("speedval").innerHTML = `<b>${S.speed % 1 ? S.speed.toFixed(1) : S.speed}</b>speed`;
+    saveS();
+  }
+  let dragX = null, dragV = 0;
+  dial.addEventListener("pointerdown", (e) => { dragX = e.clientX; dragV = S.speed; dial.setPointerCapture(e.pointerId); });
+  dial.addEventListener("pointermove", (e) => { if (dragX != null) setSpeed(dragV - (e.clientX - dragX) / 14); });
+  const dialUp = () => { dragX = null; };
+  dial.addEventListener("pointerup", dialUp);
+  dial.addEventListener("pointercancel", dialUp);
+  dial.addEventListener("keydown", (e) => {
+    if (e.key === "ArrowRight" || e.key === "ArrowUp") { setSpeed(S.speed + 0.5); e.preventDefault(); }
+    if (e.key === "ArrowLeft" || e.key === "ArrowDown") { setSpeed(S.speed - 0.5); e.preventDefault(); }
+  });
+  $("slower").onclick = () => setSpeed(S.speed - 1);
+  $("faster").onclick = () => setSpeed(S.speed + 1);
+  setSpeed(S.speed);
+
+  /* ---------- toast ---------- */
+  let toastTimer = 0;
+  function toast(msg, ms = 2600) {
+    const t = $("toast"); t.textContent = msg; t.hidden = false;
+    clearTimeout(toastTimer); toastTimer = setTimeout(() => { t.hidden = true; }, ms);
+  }
+
+  /* ---------- camera ---------- */
+  const cam = $("cam");
+  let stream = null, camNote = "";
+  async function openCamera() {
+    if (stream && stream.getVideoTracks().some(t => t.readyState === "live")) return true;
+    const nocam = $("nocam");
+    const framed = (() => { try { return window.self !== window.top; } catch (e) { return true; } })();
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      showNoCam(framed ? "The camera can't run inside this preview. Open your hosted Prompter link in Safari to record. Scrolling, the dial and tap to jump all work here."
+                       : "This browser can't reach the camera. Open the page in Safari on your iPhone.");
+      return false;
+    }
+    const dims = S.q === 720 ? { width: { ideal: 1280 }, height: { ideal: 720 } } : { width: { ideal: 1920 }, height: { ideal: 1080 } };
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        video: Object.assign({ facingMode: "user", frameRate: { ideal: 30 } }, dims),
+        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
+      });
+      cam.srcObject = stream;
+      try { await cam.play(); } catch (e) {}
+      nocam.hidden = true;
+      const vs = stream.getVideoTracks()[0].getSettings ? stream.getVideoTracks()[0].getSettings() : {};
+      camNote = vs.width ? `${Math.min(vs.width, vs.height)}p` : "";
+      updateStatus();
+      return true;
+    } catch (err) {
+      const blocked = err && (err.name === "NotAllowedError" || err.name === "SecurityError");
+      showNoCam(framed ? "The camera can't run inside this preview. Open your hosted Prompter link in Safari to record. Scrolling, the dial and tap to jump all work here."
+        : blocked ? "Camera or microphone access was blocked. On iPhone go to Settings, then Safari, then Camera and Microphone, choose Allow, and reload this page."
+        : "The camera couldn't start. Close other apps using the camera and reload the page.");
+      return false;
+    }
+  }
+  function showNoCam(msg) { const n = $("nocam"); n.textContent = msg; n.hidden = false; $("recBtn").disabled = true; }
+  function closeCamera() {
+    if (stream) stream.getTracks().forEach(t => t.stop());
+    stream = null; cam.srcObject = null;
+  }
+
+  /* ---------- recording ---------- */
+  let rec = null, chunks = [], recStart = 0, recTimer = 0, stopArmed = 0, take = null;
+  function pickType() {
+    if (!window.MediaRecorder) return null;
+    const list = ["video/mp4;codecs=avc1.640028,mp4a.40.2", "video/mp4;codecs=avc1,mp4a", "video/mp4", "video/webm;codecs=vp9,opus", "video/webm;codecs=vp8,opus", "video/webm"];
+    for (const t of list) { try { if (MediaRecorder.isTypeSupported(t)) return t; } catch (e) {} }
+    return "";
+  }
+  const recording = () => rec && rec.state === "recording";
+  function fmt(ms) { const s = Math.floor(ms / 1000); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`; }
+  function updateStatus() {
+    const L = $("statusL"), R = $("statusR");
+    if (recording()) {
+      L.innerHTML = ""; const p = document.createElement("span"); p.className = "recpill";
+      p.innerHTML = "<i></i>"; p.appendChild(document.createTextNode("REC " + fmt(Date.now() - recStart))); L.appendChild(p);
+    } else {
+      L.textContent = take ? "Take saved below. Tap Record for a new one." : "Ready";
+    }
+    R.textContent = [voiceOn ? (voiceLive ? "Voice follow listening" : "Voice follow") : (playing ? "Scrolling" : "Paused"), camNote].filter(Boolean).join(" · ");
+  }
+
+  async function startRecording() {
+    if (!stream) { const ok = await openCamera(); if (!ok) return; }
+    const type = pickType();
+    if (type === null) { toast("This browser can't record video. Update iOS and use Safari."); return; }
+    chunks = [];
+    const bits = S.q === 720 ? 3500000 : 6000000;
+    try {
+      rec = new MediaRecorder(stream, type ? { mimeType: type, videoBitsPerSecond: bits, audioBitsPerSecond: 128000 } : { videoBitsPerSecond: bits });
+    } catch (e) {
+      try { rec = new MediaRecorder(stream); } catch (e2) { toast("Recording couldn't start on this phone."); return; }
+    }
+    rec.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
+    rec.onstop = finishTake;
+    rec.onerror = () => toast("The recording hit an error. What was captured so far is kept.");
+    rec.start();
+    recStart = Date.now();
+    $("recBtn").classList.add("live");
+    $("recBtn").setAttribute("aria-label", "Stop recording");
+    $("editBtn").disabled = true;
+    recTimer = setInterval(updateStatus, 500);
+    keepAwake();
+    watchMic();
+    updateStatus();
+    if (S.countdown) runCountdown(() => setPlaying(true)); else setPlaying(true);
+  }
+  function stopRecording() {
+    cancelCountdown();
+    if (rec && rec.state !== "inactive") { try { rec.requestData && rec.requestData(); } catch (e) {} rec.stop(); }
+    setPlaying(false);
+  }
+  function finishTake() {
+    clearInterval(recTimer);
+    const dur = Date.now() - recStart;
+    $("recBtn").classList.remove("live", "confirm");
+    $("recBtn").setAttribute("aria-label", "Start recording");
+    $("editBtn").disabled = false;
+    if (!chunks.length) { toast("Nothing was captured in that take."); updateStatus(); return; }
+    const type = (rec && rec.mimeType) || chunks[0].type || "video/mp4";
+    const blob = new Blob(chunks, { type });
+    chunks = [];
+    if (take) URL.revokeObjectURL(take.url);
+    const d = new Date(), pad = (n) => String(n).padStart(2, "0");
+    const ext = /webm/.test(type) ? "webm" : "mp4";
+    const name = `take-${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}.${ext}`;
+    take = { blob, url: URL.createObjectURL(blob), name, dur };
+    showTake();
+    updateStatus();
+  }
+  $("recBtn").onclick = () => {
+    if (!recording()) { startRecording(); return; }
+    if (Date.now() - stopArmed < 2500) { stopArmed = 0; stopRecording(); return; }
+    stopArmed = Date.now();
+    $("recBtn").classList.add("confirm");
+    toast("Tap again to stop recording");
+    setTimeout(() => { if (stopArmed && Date.now() - stopArmed >= 2400) { stopArmed = 0; $("recBtn").classList.remove("confirm"); } }, 2600);
+  };
+
+  /* countdown: recording runs, script waits */
+  let cdTimer = 0;
+  function runCountdown(done) {
+    let n = 3; const c = $("count"); c.hidden = false; c.textContent = n;
+    cdTimer = setInterval(() => {
+      n--; if (n > 0) { c.textContent = n; return; }
+      clearInterval(cdTimer); cdTimer = 0; c.hidden = true; done();
+    }, 1000);
+  }
+  function cancelCountdown() { if (cdTimer) { clearInterval(cdTimer); cdTimer = 0; $("count").hidden = true; } }
+
+  /* take sheet */
+  function showTake() {
+    const v = $("takeVideo"); v.src = take.url;
+    const mb = (take.blob.size / 1048576).toFixed(take.blob.size > 1e8 ? 0 : 1);
+    $("takeInfo").textContent = `${take.name} · ${fmt(take.dur)} · ${mb} MB`;
+    const f = new File([take.blob], take.name, { type: take.blob.type });
+    const canShare = !!(navigator.canShare && navigator.canShare({ files: [f] }));
+    $("shareBtn").hidden = !canShare;
+    take.file = f;
+    $("delBtn").textContent = "Delete this take";
+    openSheet("take");
+  }
+  $("shareBtn").onclick = async () => {
+    try { await navigator.share({ files: [take.file] }); }
+    catch (e) { if (e && e.name !== "AbortError") toast("Saving didn't finish. Try Download file instead."); }
+  };
+  $("dlBtn").onclick = () => {
+    const a = document.createElement("a"); a.href = take.url; a.download = take.name;
+    document.body.appendChild(a); a.click(); a.remove();
+  };
+  let delArmed = 0;
+  $("delBtn").onclick = () => {
+    if (Date.now() - delArmed < 3000) {
+      URL.revokeObjectURL(take.url); take = null; $("takeVideo").removeAttribute("src"); closeSheets(); updateStatus(); toast("Take deleted"); return;
+    }
+    delArmed = Date.now(); $("delBtn").textContent = "Tap again to delete for good";
+  };
+  $("takeClose").onclick = closeSheets;
+  $("takeBack").onclick = closeSheets;
+
+  /* screen awake + mic watch */
+  let wake = null;
+  async function keepAwake() { try { if ("wakeLock" in navigator && !wake) { wake = await navigator.wakeLock.request("screen"); wake.addEventListener("release", () => { wake = null; }); } } catch (e) {} }
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState !== "visible" || $("prompterView").hidden) return;
+    keepAwake();
+    if (stream && stream.getVideoTracks().every(t => t.readyState === "ended")) {
+      if (recording()) stopRecording();
+      stream = null;
+      openCamera();
+      toast("The camera paused when you left the app. Anything recorded is kept.");
+    }
+  });
+  function watchMic() {
+    const a = stream && stream.getAudioTracks()[0];
+    if (!a) return;
+    a.onmute = () => { if (voiceOn && recording()) { micLost(); } };
+    a.onended = () => { if (voiceOn) micLost(); else if (recording()) toast("The microphone stopped. Stop and start a new take."); };
+  }
+
+  /* ---------- voice follow ---------- */
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  let voiceOn = false, voiceLive = false, vr = null, wantVoice = false, finalBuf = [], userMoved = false, saidUpTo = 0, cur = 0;
+  function setVoice(on) {
+    if (on && !SR) { toast("Voice follow isn't available in this browser. The speed dial still works."); $("vfIn").checked = false; on = false; }
+    voiceOn = on; S.voice = on; saveS();
+    dial.classList.toggle("voice", on);
+    if (!on) { stopVoice(); resetSaid(); }
+    else if (playing) startVoice();
+    updateStatus();
+  }
+  function startVoice() {
+    if (!SR || wantVoice) return;
+    wantVoice = true; finalBuf = []; userMoved = true;
+    vr = new SR();
+    vr.continuous = true; vr.interimResults = true; vr.lang = navigator.language || "en-US";
+    vr.onstart = () => { voiceLive = true; updateStatus(); setTimeout(checkMicAfterVoice, 1500); };
+    vr.onresult = (e) => {
+      let interim = [];
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        const ws = e.results[i][0].transcript.split(/\s+/).map(norm).filter(Boolean);
+        if (e.results[i].isFinal) { finalBuf = finalBuf.concat(ws).slice(-8); } else interim = interim.concat(ws);
+      }
+      follow(finalBuf.concat(interim));
+    };
+    vr.onerror = (e) => {
+      if (e.error === "not-allowed" || e.error === "service-not-allowed") {
+        wantVoice = false; $("vfIn").checked = false; setVoice(false);
+        toast("Speech recognition was blocked, so voice follow is off. The speed dial is back on.", 4200);
+      }
+    };
+    vr.onend = () => {
+      voiceLive = false; updateStatus();
+      if (wantVoice) setTimeout(() => { if (wantVoice) { try { vr.start(); } catch (e) {} } }, 200);
+    };
+    try { vr.start(); } catch (e) { wantVoice = false; }
+  }
+  function stopVoice() { wantVoice = false; voiceLive = false; if (vr) { try { vr.abort(); } catch (e) {} } vr = null; }
+  function checkMicAfterVoice() {
+    const a = stream && stream.getAudioTracks()[0];
+    if (recording() && a && (a.muted || a.readyState === "ended")) micLost();
+  }
+  function micLost() {
+    $("vfIn").checked = false; setVoice(false);
+    toast("Voice follow was cutting off the recording mic, so it's off now. Use the speed dial for this take.", 5000);
+  }
+
+  const similar = (a, b) => {
+    if (a === b) return true;
+    if (a.length < 3 || b.length < 3) return false;
+    if (a.startsWith(b) || b.startsWith(a)) return Math.min(a.length, b.length) >= 4;
+    if (Math.abs(a.length - b.length) > 1 || a.length < 5) return false;
+    let diff = 0, i = 0, j = 0;
+    while (i < a.length && j < b.length) {
+      if (a[i] === b[j]) { i++; j++; continue; }
+      if (++diff > 1) return false;
+      if (a.length > b.length) i++; else if (b.length > a.length) j++; else { i++; j++; }
+    }
+    return diff + (a.length - i) + (b.length - j) <= 1;
+  };
+  function follow(spoken) {
+    if (!playing || !M.length) return;
+    if (userMoved) { const a = anchorWord(); cur = a ? +a.dataset.i : 0; userMoved = false; markSaid(cur); }
+    const s = spoken.slice(-5);
+    if (!s.length) return;
+    let best = -1, bestScore = 0;
+    const lo = Math.max(0, cur - 4), hi = Math.min(M.length - 1, cur + 40);
+    for (let j = lo; j <= hi; j++) {
+      let score = 0;
+      for (let k = 0; k < s.length; k++) {
+        const mj = j - k; if (mj < 0) break;
+        if (similar(M[mj].n, s[s.length - 1 - k])) score += k === 0 ? 1.5 : 1;
+      }
+      score -= Math.abs(j - cur) * 0.02;
+      if (score > bestScore) { bestScore = score; best = j; }
+    }
+    if (best < 0 || bestScore < 2) return;
+    cur = best + 1;
+    markSaid(cur);
+    target = offsetFor(M[best].el);
+  }
+  function markSaid(n) {
+    if (n > saidUpTo) for (let i = saidUpTo; i < n && i < M.length; i++) M[i].el.classList.add("said");
+    else for (let i = n; i < saidUpTo; i++) M[i].el.classList.remove("said");
+    saidUpTo = n;
+  }
+  function resetSaid() { markSaid(0); }
+
+  /* ---------- sheets ---------- */
+  function openSheet(which) {
+    closeSheets();
+    $(which === "take" ? "takeSheet" : "setSheet").hidden = false;
+    $(which === "take" ? "takeBack" : "setBack").hidden = false;
+  }
+  function closeSheets() { ["takeSheet", "takeBack", "setSheet", "setBack"].forEach(id => $(id).hidden = true); delArmed = 0; }
+  $("setBtn").onclick = () => openSheet("settings");
+  $("setDone").onclick = closeSheets;
+  $("setBack").onclick = closeSheets;
+
+  const bindRange = (id, key, unit) => {
+    const inp = $(id + "In"), out = $(id + "Out");
+    inp.value = S[key]; out.textContent = S[key] + unit;
+    inp.addEventListener("input", () => { S[key] = +inp.value; out.textContent = S[key] + unit; saveS(); applyLook(); });
+  };
+  bindRange("fs", "fs", " px");
+  bindRange("ph", "ph", "%");
+  bindRange("dim", "dim", "%");
+  $("mirIn").checked = !!S.mirror; $("mirIn").onchange = () => { S.mirror = $("mirIn").checked; saveS(); applyLook(); };
+  $("cdIn").checked = !!S.countdown; $("cdIn").onchange = () => { S.countdown = $("cdIn").checked; saveS(); };
+  $("vfIn").checked = !!S.voice; $("vfIn").onchange = () => setVoice($("vfIn").checked);
+  const paintQ = () => document.querySelectorAll("#qSeg button").forEach(b => b.classList.toggle("on", +b.dataset.q === S.q));
+  document.querySelectorAll("#qSeg button").forEach(b => b.onclick = () => {
+    if (recording()) { toast("Stop recording to change quality."); return; }
+    S.q = +b.dataset.q; saveS(); paintQ();
+    if (stream) { closeCamera(); openCamera(); }
+  });
+  paintQ();
+
+  /* ---------- navigation ---------- */
+  $("goBtn").onclick = async () => {
+    store.set("script", scriptEl.value);
+    $("editorView").hidden = true;
+    $("prompterView").hidden = false;
+    renderScript();
+    applyLook();
+    pos = 0; target = 0; write();
+    voiceOn = false; if (S.voice) setVoice(true);
+    keepAwake();
+    $("recBtn").disabled = false;
+    await openCamera();
+    updateStatus();
+  };
+  $("editBtn").onclick = () => {
+    if (recording()) { toast("Stop recording to edit the script."); return; }
+    setPlaying(false); stopVoice();
+    closeCamera();
+    $("prompterView").hidden = true;
+    $("editorView").hidden = false;
+  };
+})();
+</script>
+</body></html>
