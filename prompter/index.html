@@ -295,7 +295,7 @@ input[type=range] { width: 100%; accent-color: var(--accent); }
   <video id="takeVideo" controls playsinline></video>
   <div class="takeinfo" id="takeInfo"></div>
   <div class="row">
-    <button class="btn primary" id="shareBtn" type="button">Save video</button>
+    <button class="btn primary" id="shareBtn" type="button">Save to Photos</button>
     <button class="btn" id="dlBtn" type="button">Download file</button>
   </div>
   <button class="btn danger" id="delBtn" type="button">Delete this take</button>
@@ -569,10 +569,12 @@ I'm Justin Roberts with the NHE Team, your Neighborhood Home Experts. Talk soon.
   }
 
   /* ---------- recording ---------- */
-  let rec = null, chunks = [], recStart = 0, recTimer = 0, stopArmed = 0, take = null;
+  let rec = null, chunks = [], recStart = 0, recTimer = 0, take = null, recBytes = 0, lastErr = null;
+  const errName = (e) => (e && (e.name || e.message)) || "unknown";
   function pickType() {
     if (!window.MediaRecorder) return null;
-    const list = ["video/mp4;codecs=avc1.640028,mp4a.40.2", "video/mp4;codecs=avc1,mp4a", "video/mp4", "video/webm;codecs=vp9,opus", "video/webm;codecs=vp8,opus", "video/webm"];
+    // Plain "video/mp4" first: iPhone Safari records H.264 MP4 and can refuse longer codec strings.
+    const list = ["video/mp4", "video/mp4;codecs=avc1,mp4a", "video/webm;codecs=vp9,opus", "video/webm;codecs=vp8,opus", "video/webm"];
     for (const t of list) { try { if (MediaRecorder.isTypeSupported(t)) return t; } catch (e) {} }
     return "";
   }
@@ -582,7 +584,8 @@ I'm Justin Roberts with the NHE Team, your Neighborhood Home Experts. Talk soon.
     const L = $("statusL"), R = $("statusR");
     if (recording()) {
       L.innerHTML = ""; const p = document.createElement("span"); p.className = "recpill";
-      p.innerHTML = "<i></i>"; p.appendChild(document.createTextNode("REC " + fmt(Date.now() - recStart))); L.appendChild(p);
+      const mb = recBytes ? " · " + (recBytes / 1048576).toFixed(1) + " MB" : "";
+      p.innerHTML = "<i></i>"; p.appendChild(document.createTextNode("REC " + fmt(Date.now() - recStart) + mb)); L.appendChild(p);
     } else {
       L.textContent = take ? "Take saved below. Tap Record for a new one." : "Ready";
     }
@@ -593,17 +596,17 @@ I'm Justin Roberts with the NHE Team, your Neighborhood Home Experts. Talk soon.
     if (!stream) { const ok = await openCamera(); if (!ok) return; }
     const type = pickType();
     if (type === null) { toast("This browser can't record video. Update iOS and use Safari."); return; }
-    chunks = [];
+    chunks = []; recBytes = 0;
     const bits = S.q === 720 ? 3500000 : 6000000;
-    try {
-      rec = new MediaRecorder(stream, type ? { mimeType: type, videoBitsPerSecond: bits, audioBitsPerSecond: 128000 } : { videoBitsPerSecond: bits });
-    } catch (e) {
-      try { rec = new MediaRecorder(stream); } catch (e2) { toast("Recording couldn't start on this phone."); return; }
-    }
-    rec.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
+    const tries = type ? [{ mimeType: type, videoBitsPerSecond: bits }, { mimeType: type }, {}] : [{}];
+    rec = null;
+    for (const opts of tries) { try { rec = new MediaRecorder(stream, opts); break; } catch (e) { lastErr = e; } }
+    if (!rec) { toast("Recording couldn't start on this phone (" + errName(lastErr) + ").", 6000); return; }
+    rec.ondataavailable = (e) => { if (e.data && e.data.size) { chunks.push(e.data); recBytes += e.data.size; } };
     rec.onstop = finishTake;
-    rec.onerror = () => toast("The recording hit an error. What was captured so far is kept.");
-    rec.start();
+    rec.onerror = (e) => toast("The recording hit an error (" + errName(e && e.error) + "). What was captured so far is kept.", 6000);
+    try { rec.start(1000); }
+    catch (e) { toast("Recording couldn't start (" + errName(e) + ").", 6000); rec = null; return; }
     recStart = Date.now();
     $("recBtn").classList.add("live");
     $("recBtn").setAttribute("aria-label", "Stop recording");
@@ -616,7 +619,7 @@ I'm Justin Roberts with the NHE Team, your Neighborhood Home Experts. Talk soon.
   }
   function stopRecording() {
     cancelCountdown();
-    if (rec && rec.state !== "inactive") { try { rec.requestData && rec.requestData(); } catch (e) {} rec.stop(); }
+    if (rec && rec.state !== "inactive") { try { rec.stop(); } catch (e) { toast("Stopping failed (" + errName(e) + ").", 6000); } }
     setPlaying(false);
   }
   function finishTake() {
@@ -625,7 +628,7 @@ I'm Justin Roberts with the NHE Team, your Neighborhood Home Experts. Talk soon.
     $("recBtn").classList.remove("live", "confirm");
     $("recBtn").setAttribute("aria-label", "Start recording");
     $("editBtn").disabled = false;
-    if (!chunks.length) { toast("Nothing was captured in that take."); updateStatus(); return; }
+    if (!chunks.length) { toast("The phone handed back an empty recording (" + ((rec && rec.mimeType) || "no format") + "). Send Claude a screenshot of this.", 8000); updateStatus(); return; }
     const type = (rec && rec.mimeType) || chunks[0].type || "video/mp4";
     const blob = new Blob(chunks, { type });
     chunks = [];
@@ -638,12 +641,7 @@ I'm Justin Roberts with the NHE Team, your Neighborhood Home Experts. Talk soon.
     updateStatus();
   }
   $("recBtn").onclick = () => {
-    if (!recording()) { startRecording(); return; }
-    if (Date.now() - stopArmed < 2500) { stopArmed = 0; stopRecording(); return; }
-    stopArmed = Date.now();
-    $("recBtn").classList.add("confirm");
-    toast("Tap again to stop recording");
-    setTimeout(() => { if (stopArmed && Date.now() - stopArmed >= 2400) { stopArmed = 0; $("recBtn").classList.remove("confirm"); } }, 2600);
+    if (recording()) stopRecording(); else startRecording();
   };
 
   /* countdown: recording runs, script waits */
@@ -661,17 +659,20 @@ I'm Justin Roberts with the NHE Team, your Neighborhood Home Experts. Talk soon.
   function showTake() {
     const v = $("takeVideo"); v.src = take.url;
     const mb = (take.blob.size / 1048576).toFixed(take.blob.size > 1e8 ? 0 : 1);
-    $("takeInfo").textContent = `${take.name} · ${fmt(take.dur)} · ${mb} MB`;
     const f = new File([take.blob], take.name, { type: take.blob.type });
-    const canShare = !!(navigator.canShare && navigator.canShare({ files: [f] }));
+    let canShare = false;
+    try { canShare = !!(navigator.canShare && navigator.canShare({ files: [f] })); } catch (e) {}
     $("shareBtn").hidden = !canShare;
+    $("takeInfo").textContent = `${fmt(take.dur)} · ${mb} MB · ${take.blob.type || "video"}. ` +
+      (canShare ? "Tap Save to Photos, then choose Save Video." : "Tap Download file to keep it.") +
+      " It isn't kept after you close this page.";
     take.file = f;
     $("delBtn").textContent = "Delete this take";
     openSheet("take");
   }
   $("shareBtn").onclick = async () => {
     try { await navigator.share({ files: [take.file] }); }
-    catch (e) { if (e && e.name !== "AbortError") toast("Saving didn't finish. Try Download file instead."); }
+    catch (e) { if (e && e.name !== "AbortError") toast("Saving didn't finish (" + errName(e) + "). Tap Save to Photos again.", 6000); }
   };
   $("dlBtn").onclick = () => {
     const a = document.createElement("a"); a.href = take.url; a.download = take.name;
