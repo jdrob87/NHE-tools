@@ -1,0 +1,61 @@
+{
+  "updatedAt": "2026-11-18T07:27:00.000Z",
+  "summary": "Sample dashboard for tests. No real people or deals.",
+  "waiting": [
+    {
+      "id": "fake-1",
+      "lead": "1",
+      "title": "Call the example seller",
+      "detail": "Fictional follow-up about 123 Sample Street.",
+      "meta": "Since Nov 16",
+      "status": { "label": "Time-sensitive", "tone": "warning" }
+    },
+    {
+      "id": "fake-2",
+      "lead": "2",
+      "title": "Review the demo offer",
+      "detail": "Pretend offer on 456 Placeholder Ave.",
+      "meta": "Since Nov 12",
+      "status": { "label": "Waiting", "tone": "warning" }
+    }
+  ],
+  "inProgress": [
+    { "who": "Demo Bot", "what": "Running a pretend triage pass", "last": "Nov 17" },
+    { "who": "Sample Bot", "what": "Drafting a fake calendar", "last": "Nov 17, 11:00 AM" }
+  ],
+  "done": [
+    { "text": "Sample task completed", "meta": "Nov 17", "done": true },
+    { "text": "Another pretend checkmark", "meta": "Nov 16", "done": true }
+  ],
+  "deals": [
+    {
+      "deal": "123 Sample Street",
+      "stage": "Listing (example)",
+      "stands": "Toy status only",
+      "next": "None"
+    }
+  ],
+  "events": [
+    { "date": "2026-11-19", "title": "Example work call", "lane": "work" },
+    { "date": "2026-11-20", "title": "Example family event", "lane": "family" },
+    { "date": "2026-11-21", "title": "Another work note", "lane": "work" }
+  ],
+  "calendarMonth": "2026-11",
+  "calendarToday": "2026-11-18",
+  "bots": [
+    { "bot": "Demo Bot", "focus": "Pretend focus line", "last": "Nov 17", "state": "active" },
+    { "bot": "Sample Bot", "focus": "Waiting on a fake OK", "last": "Nov 16", "state": "you" },
+    { "bot": "Hold Bot", "focus": "Paused example", "last": "Nov 10", "state": "hold" }
+  ],
+  "inbox": [
+    { "label": "Latest work pass", "value": "Example summary only." },
+    { "label": "Schedule", "value": "Hourly weekdays in this sample." }
+  ],
+  "links": [
+    { "title": "Example link", "site": "Example", "href": "https://example.com" }
+  ],
+  "activity": [
+    { "at": "2026-11-17T22:00:00.000Z", "who": "Demo Bot", "text": "Finished a sample job" },
+    { "at": "2026-11-17T18:00:00.000Z", "who": "Sample Bot", "text": "Posted a pretend update" }
+  ]
+}

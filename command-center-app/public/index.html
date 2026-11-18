@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="robots" content="noindex, nofollow">
+  <meta name="theme-color" content="#f6f5f3" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#1c1c1e" media="(prefers-color-scheme: dark)">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="NHE Team Command Center">
+  <title>NHE Team Command Center</title>
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+  <link rel="icon" href="/icon.svg" type="image/svg+xml">
+  <link rel="icon" href="/icon-192.png" type="image/png">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <div id="login-view" class="wrap">
+    <p class="eyebrow">NHE</p>
+    <h1>NHE Team Command Center</h1>
+    <p class="summary">Sign in once on this phone. The session stays on the home-screen app.</p>
+    <form id="login-form">
+      <label for="passcode">Passcode</label>
+      <input id="passcode" name="passcode" type="password" autocomplete="current-password" autocapitalize="off" autocorrect="off" spellcheck="false" required>
+      <button type="submit" class="primary">Unlock</button>
+      <p id="login-error" class="banner" role="alert"></p>
+    </form>
+  </div>
+
+  <div id="app-view" class="wrap" hidden>
+    <header class="top">
+      <div class="brand-row">
+        <p class="eyebrow">NHE</p>
+        <button type="button" id="logout" class="text-btn">Log out</button>
+      </div>
+      <h1>NHE Team Command Center</h1>
+      <p id="summary" class="summary"></p>
+      <p id="dash-summary" class="summary" hidden></p>
+      <p id="updated" class="summary"></p>
+      <div id="counts" class="counts" aria-label="Summary counts">
+        <a class="count" href="#waiting-section"><span id="count-waiting" class="count-num">0</span><span class="count-label">Waiting</span></a>
+        <a class="count" href="#progress-section"><span id="count-progress" class="count-num">0</span><span class="count-label">In progress</span></a>
+        <a class="count" href="#deals-section"><span id="count-deals" class="count-num">0</span><span class="count-label">Deals</span></a>
+        <a class="count" href="#bots-section"><span id="count-bots" class="count-num">0</span><span class="count-label">Bots on you</span></a>
+      </div>
+      <nav class="jump" aria-label="Sections">
+        <a href="#activity-section">Activity</a>
+        <a href="#waiting-section">Waiting</a>
+        <a href="#progress-section">Progress</a>
+        <a href="#recent-section">Recent</a>
+        <a href="#deals-section">Deals</a>
+        <a href="#calendar-section">Calendar</a>
+        <a href="#bots-section">Bots</a>
+        <a href="#inbox-section">Inbox</a>
+        <a href="#links-section">Links</a>
+      </nav>
+    </header>
+    <p id="banner" class="banner" role="status"></p>
+    <aside class="callout">
+      <p class="callout-title">Replies go to Tony</p>
+      <p>Flip Done when a waiting item is finished, or tap Respond to type or dictate a note. The rest of the board is the latest picture from the team.</p>
+    </aside>
+
+    <section id="activity-section">
+      <div class="section-head">
+        <h2>Latest team activity</h2>
+        <p class="caption section-updated"></p>
+      </div>
+      <div id="activity-list" class="rows" hidden></div>
+      <p id="activity-empty" class="empty" hidden>No team activity yet.</p>
+    </section>
+
+    <section id="waiting-section">
+      <div class="section-head">
+        <h2>Waiting on you</h2>
+        <p class="caption">Most urgent first</p>
+        <p class="caption section-updated"></p>
+      </div>
+      <div id="waiting-list" class="rows"></div>
+      <p id="empty" class="empty" hidden>Nothing is waiting on you.</p>
+    </section>
+
+    <section id="done-section" hidden>
+      <div class="section-head">
+        <h2 id="done-heading">Done</h2>
+        <p class="caption">Finished items stay on this phone</p>
+      </div>
+      <div id="done-list" class="rows"></div>
+    </section>
+
+    <section id="progress-section">
+      <div class="section-head">
+        <h2>In progress</h2>
+        <p class="caption section-updated"></p>
+      </div>
+      <div id="progress-list" class="rows" hidden></div>
+      <p id="progress-empty" class="empty" hidden>Nothing in progress.</p>
+    </section>
+
+    <section id="recent-section">
+      <div class="section-head">
+        <h2>Recently done</h2>
+        <p class="caption section-updated"></p>
+      </div>
+      <div id="recent-list" class="rows" hidden></div>
+      <p id="recent-empty" class="empty" hidden>Nothing recently done.</p>
+    </section>
+
+    <section id="deals-section">
+      <div class="section-head">
+        <h2>Deals</h2>
+        <p class="caption section-updated"></p>
+      </div>
+      <div id="deals-list" class="rows" hidden></div>
+      <p id="deals-empty" class="empty" hidden>No deals on the board.</p>
+    </section>
+
+    <section id="calendar-section">
+      <div class="section-head">
+        <h2>Next two weeks</h2>
+        <p class="caption section-updated"></p>
+      </div>
+      <div class="chips" id="cal-chips">
+        <button type="button" class="chip" data-lane="all" aria-pressed="true">All</button>
+        <button type="button" class="chip" data-lane="work" aria-pressed="false">Work</button>
+        <button type="button" class="chip" data-lane="family" aria-pressed="false">Family</button>
+      </div>
+      <div id="calendar-grids"></div>
+      <div id="event-list" class="rows" hidden></div>
+      <p id="event-empty" class="empty" hidden>Nothing in the next two weeks.</p>
+    </section>
+
+    <section id="bots-section">
+      <div class="section-head">
+        <h2>What each bot is doing</h2>
+        <p class="caption section-updated"></p>
+      </div>
+      <div class="chips" id="bot-chips">
+        <button type="button" class="chip" data-bot-filter="all" aria-pressed="true">All</button>
+        <button type="button" class="chip" data-bot-filter="you" aria-pressed="false">Waiting on you</button>
+        <button type="button" class="chip" data-bot-filter="active" aria-pressed="false">Active</button>
+      </div>
+      <div id="bot-list" class="rows" hidden></div>
+      <p id="bot-empty" class="empty" hidden>No bots in this view.</p>
+    </section>
+
+    <section id="inbox-section">
+      <div class="section-head">
+        <h2>Inbox</h2>
+        <p class="caption section-updated"></p>
+      </div>
+      <div id="inbox-list" class="rows" hidden></div>
+      <p id="inbox-empty" class="empty" hidden>Inbox is empty.</p>
+    </section>
+
+    <section id="links-section">
+      <div class="section-head">
+        <h2>Quick links</h2>
+        <p class="caption section-updated"></p>
+      </div>
+      <div id="links-list" class="rows" hidden></div>
+      <p id="links-empty" class="empty" hidden>No quick links.</p>
+    </section>
+  </div>
+
+  <div id="sheet-root" class="sheet-root" hidden>
+    <button type="button" id="sheet-backdrop" class="sheet-backdrop" aria-label="Close"></button>
+    <div id="sheet" class="sheet" role="dialog" aria-modal="true" aria-labelledby="sheet-title">
+      <div class="sheet-handle"></div>
+      <p id="rec-state" class="rec-state" hidden>Listening</p>
+      <h2 id="sheet-title"></h2>
+      <label class="field" for="sheet-text">Response</label>
+      <textarea id="sheet-text" maxlength="8000" rows="5" placeholder="Type or dictate a response"></textarea>
+      <p id="sheet-interim" class="interim" aria-live="polite"></p>
+      <p id="mic-hint" class="hint" hidden>Dictation isn't available in this browser. Use the keyboard's microphone key.</p>
+      <label class="also" for="also-done">
+        <input id="also-done" type="checkbox">
+        <span>Also mark done</span>
+      </label>
+      <div class="sheet-actions">
+        <button type="button" id="mic" class="mic" aria-pressed="false">Mic</button>
+        <button type="button" id="sheet-send" class="primary">Send</button>
+      </div>
+      <p id="sheet-error" class="banner" role="alert"></p>
+    </div>
+  </div>
+  <noscript><p class="wrap">This page needs JavaScript.</p></noscript>
+  <script src="/dashboard-view.js"></script>
+  <script src="/app.js"></script>
+</body>
+</html>
