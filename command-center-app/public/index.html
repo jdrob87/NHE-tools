@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="robots" content="noindex, nofollow">
+  <meta name="theme-color" content="#0b0d10">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="NHE Command Center">
+  <title>NHE Command Center</title>
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+  <link rel="icon" href="/icon.svg" type="image/svg+xml">
+  <link rel="icon" href="/icon-192.png" type="image/png">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <div id="login-view" class="wrap">
+    <p class="mark">NHE</p>
+    <h1>NHE Command Center</h1>
+    <p class="lede">Sign in once on this phone. The session stays on the home-screen app.</p>
+    <form id="login-form">
+      <label for="passcode">Passcode</label>
+      <input id="passcode" name="passcode" type="password" autocomplete="current-password" autocapitalize="off" autocorrect="off" spellcheck="false" required>
+      <button type="submit" class="primary">Unlock</button>
+      <p id="login-error" class="message" role="alert"></p>
+    </form>
+  </div>
+
+  <div id="app-view" class="wrap" hidden>
+    <header class="top">
+      <div class="brand-row">
+        <p class="mark">NHE</p>
+        <button type="button" id="logout" class="ghost">Log out</button>
+      </div>
+      <h1>NHE Command Center</h1>
+    </header>
+    <p class="lede">Reply to an item and it goes to your assistant. Use the keyboard mic to dictate.</p>
+    <p id="banner" class="message" role="status"></p>
+    <div id="open-list"></div>
+    <p id="empty" class="empty" hidden>Nothing open right now.</p>
+    <section id="done-section" hidden>
+      <div class="done-bar">
+        <h2 id="done-heading">Sent / done</h2>
+        <button type="button" id="toggle-done" class="ghost" aria-expanded="false" aria-controls="done-list">Show done</button>
+      </div>
+      <div id="done-list" hidden></div>
+    </section>
+  </div>
+  <noscript><p class="wrap">This page needs JavaScript.</p></noscript>
+  <script src="/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,17 @@
+[
+  {
+    "id": "fake-1",
+    "title": "Call the example seller",
+    "detail": "Fictional follow-up about 123 Sample Street. Not a real client, and the number 555-0100 is made up."
+  },
+  {
+    "id": "fake-2",
+    "title": "Review the demo offer",
+    "detail": "Pretend offer on 456 Placeholder Ave. The price, dates, and names are invented for this sample list."
+  },
+  {
+    "id": "fake-3",
+    "title": "Send the practice listing notes",
+    "detail": "Toy task only. There is no real property, buyer, or document behind this item."
+  }
+]
