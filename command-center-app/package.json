@@ -2,7 +2,7 @@
   "name": "nhe-command-center",
   "version": "1.0.0",
   "private": true,
-  "description": "Phone home-screen list that forwards a reply to an assistant webhook.",
+  "description": "Phone home-screen command center that forwards a reply to an assistant webhook.",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",

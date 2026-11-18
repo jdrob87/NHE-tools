@@ -312,6 +312,134 @@ button:disabled { opacity: 0.55; }
 
 .empty { margin: 8px 0 0; color: var(--muted); }
 
+.counts {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 16px;
+  padding: 8px 0;
+  background: var(--bg);
+}
+
+.count {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 64px;
+  padding: 8px 4px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  text-decoration: none;
+  color: inherit;
+}
+
+.count-num {
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  color: var(--muted);
+}
+
+.count-label {
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 1.2;
+  text-align: center;
+}
+
+.jump, .chips {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.jump { margin-top: 4px; }
+
+@media (min-width: 720px) {
+  .jump { flex-wrap: wrap; overflow: visible; }
+}
+.chips { margin: 0 0 12px; }
+
+.jump a, .chip {
+  flex: none;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--card);
+  color: var(--text);
+  text-decoration: none;
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.jump a { padding: 8px 12px; }
+.chip { min-height: 36px; padding: 6px 12px; }
+.chip[aria-pressed="true"] {
+  background: var(--text);
+  border-color: var(--text);
+  color: var(--bg);
+}
+
+.row.feed { grid-template-columns: 1fr; }
+
+.month-label {
+  margin: 14px 0 8px;
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.cal-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 4px;
+}
+
+.cal-dow, .cal-cell {
+  text-align: center;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.cal-dow { color: var(--muted); padding-bottom: 4px; }
+
+.cal-cell {
+  aspect-ratio: 1;
+  display: grid;
+  place-items: center;
+  border-radius: 10px;
+}
+
+.cal-cell.is-today {
+  background: var(--text);
+  color: var(--bg);
+}
+
+.cal-cell.has-event:not(.is-today) {
+  background: var(--callout-bg);
+  color: var(--callout-fg);
+}
+
+.cal-cell.has-event.is-today { box-shadow: inset 0 0 0 2px var(--callout-bg); }
+
+a.link-row {
+  display: block;
+  padding: 14px;
+  color: inherit;
+  text-decoration: none;
+}
+
+a.link-row + a.link-row { border-top: 1px solid var(--line); }
+.link-site { margin: 4px 0 0; color: var(--muted); font-size: 13px; }
+
+.section-updated:empty { display: none; }
+
 .sheet-root {
   position: fixed;
   inset: 0;

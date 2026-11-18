@@ -21,29 +21,23 @@ function failStartup(message) {
   process.exit(1);
 }
 
-function loadItems() {
-  const raw = process.env.ITEMS_JSON;
-  if (!raw || !raw.trim()) return [];
-  let parsed;
-  try {
-    parsed = JSON.parse(raw);
-  } catch (err) {
-    failStartup('ITEMS_JSON is not valid JSON');
-  }
-  if (!Array.isArray(parsed)) failStartup('ITEMS_JSON must be a JSON array');
+function normalizeItems(parsed, label) {
+  if (!Array.isArray(parsed)) failStartup(label + ' must be a JSON array');
   const seen = new Set();
   return parsed.map(function (item, index) {
-    if (!item || typeof item !== 'object') failStartup('ITEMS_JSON item ' + index + ' is not an object');
+    if (!item || typeof item !== 'object' || Array.isArray(item)) {
+      failStartup(label + ' item ' + index + ' is not an object');
+    }
     if (typeof item.id !== 'string' || item.id.trim() === '' || item.id.length > 80) {
-      failStartup('ITEMS_JSON item ' + index + ' needs a string id');
+      failStartup(label + ' item ' + index + ' needs a string id');
     }
     if (typeof item.title !== 'string' || item.title.trim() === '' || item.title.length > 200) {
-      failStartup('ITEMS_JSON item ' + index + ' needs a string title');
+      failStartup(label + ' item ' + index + ' needs a string title');
     }
     if (item.detail != null && (typeof item.detail !== 'string' || item.detail.length > 2000)) {
-      failStartup('ITEMS_JSON item ' + index + ' has a detail that is not a string');
+      failStartup(label + ' item ' + index + ' has a detail that is not a string');
     }
-    if (seen.has(item.id)) failStartup('ITEMS_JSON has a duplicate id');
+    if (seen.has(item.id)) failStartup(label + ' has a duplicate id');
     seen.add(item.id);
     return {
       id: item.id,
@@ -54,6 +48,266 @@ function loadItems() {
       status: optionalStatus(item.status),
     };
   });
+}
+
+function loadItems() {
+  const raw = process.env.ITEMS_JSON;
+  if (!raw || !raw.trim()) return [];
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (err) {
+    failStartup('ITEMS_JSON is not valid JSON');
+  }
+  return normalizeItems(parsed, 'ITEMS_JSON');
+}
+
+function requireObject(value, message) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) failStartup(message);
+}
+
+function requireArray(value, label) {
+  if (value == null) return [];
+  if (!Array.isArray(value)) failStartup(label + ' must be an array');
+  return value;
+}
+
+function requireText(value, max, message) {
+  if (typeof value !== 'string') failStartup(message);
+  const trimmed = value.trim();
+  if (!trimmed || trimmed.length > max) failStartup(message);
+  return trimmed;
+}
+
+function optionalField(value, max, message) {
+  if (value == null || value === '') return '';
+  if (typeof value !== 'string') failStartup(message);
+  const trimmed = value.trim();
+  if (trimmed.length > max) failStartup(message);
+  return trimmed;
+}
+
+function requireYmd(value, message) {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) failStartup(message);
+  const year = Number(value.slice(0, 4));
+  const month = Number(value.slice(5, 7));
+  const day = Number(value.slice(8, 10));
+  const date = new Date(Date.UTC(year, month - 1, day));
+  if (date.getUTCFullYear() !== year || date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day) {
+    failStartup(message);
+  }
+  return value;
+}
+
+function requireYm(value, message) {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}$/.test(value)) failStartup(message);
+  const month = Number(value.slice(5, 7));
+  if (month < 1 || month > 12) failStartup(message);
+  return value;
+}
+
+function requireIso(value, message) {
+  if (typeof value !== 'string') failStartup(message);
+  const trimmed = value.trim();
+  if (!trimmed || trimmed.length > 80 || Number.isNaN(Date.parse(trimmed))) failStartup(message);
+  return trimmed;
+}
+
+function requireEnum(value, allowed, message) {
+  if (typeof value !== 'string' || allowed.indexOf(value) === -1) failStartup(message);
+  return value;
+}
+
+function requireHref(value, message) {
+  const href = requireText(value, 2000, message);
+  let url;
+  try {
+    url = new URL(href);
+  } catch (err) {
+    failStartup(message);
+  }
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') failStartup(message);
+  return href;
+}
+
+function utcDay(date) {
+  return date.toISOString().slice(0, 10);
+}
+
+function sortActivity(items) {
+  return items.slice().sort(function (a, b) {
+    return Date.parse(b.at) - Date.parse(a.at);
+  });
+}
+
+function emptyDashboard() {
+  const today = utcDay(new Date());
+  return {
+    updatedAt: '',
+    summary: '',
+    waiting: [],
+    inProgress: [],
+    done: [],
+    deals: [],
+    events: [],
+    calendarMonth: today.slice(0, 7),
+    calendarToday: today,
+    bots: [],
+    inbox: [],
+    links: [],
+    activity: [],
+  };
+}
+
+function loadDashboard() {
+  const raw = process.env.DASHBOARD_JSON;
+  if (!raw || !raw.trim()) return emptyDashboard();
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (err) {
+    failStartup('DASHBOARD_JSON is not valid JSON');
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    failStartup('DASHBOARD_JSON must be a JSON object');
+  }
+
+  const dashboard = emptyDashboard();
+  if (parsed.updatedAt != null && parsed.updatedAt !== '') {
+    dashboard.updatedAt = requireIso(parsed.updatedAt, 'DASHBOARD_JSON.updatedAt must be an ISO-8601 time');
+  }
+  if (parsed.summary != null && parsed.summary !== '') {
+    dashboard.summary = requireText(parsed.summary, 300, 'DASHBOARD_JSON.summary must be a short string');
+  }
+
+  if (Object.prototype.hasOwnProperty.call(parsed, 'waiting')) {
+    if (!Array.isArray(parsed.waiting)) failStartup('DASHBOARD_JSON.waiting must be an array');
+    dashboard.waiting = normalizeItems(parsed.waiting, 'DASHBOARD_JSON.waiting');
+  }
+
+  dashboard.inProgress = requireArray(parsed.inProgress, 'DASHBOARD_JSON.inProgress').map(function (item, index) {
+    const label = 'DASHBOARD_JSON.inProgress item ' + index;
+    requireObject(item, label + ' is not an object');
+    return {
+      who: requireText(item.who, 80, label + ' needs a who string'),
+      what: requireText(item.what, 500, label + ' needs a what string'),
+      last: optionalField(item.last, 120, label + ' last must be a string'),
+    };
+  });
+
+  dashboard.done = requireArray(parsed.done, 'DASHBOARD_JSON.done').map(function (item, index) {
+    const label = 'DASHBOARD_JSON.done item ' + index;
+    requireObject(item, label + ' is not an object');
+    if (item.done != null && typeof item.done !== 'boolean') failStartup(label + ' done must be true or false');
+    return {
+      text: requireText(item.text, 500, label + ' needs a text string'),
+      meta: optionalField(item.meta, 120, label + ' meta must be a string'),
+      done: item.done === false ? false : true,
+    };
+  });
+
+  dashboard.deals = requireArray(parsed.deals, 'DASHBOARD_JSON.deals').map(function (item, index) {
+    const label = 'DASHBOARD_JSON.deals item ' + index;
+    requireObject(item, label + ' is not an object');
+    return {
+      deal: requireText(item.deal, 200, label + ' needs a deal string'),
+      stage: optionalField(item.stage, 80, label + ' stage must be a string'),
+      stands: optionalField(item.stands, 500, label + ' stands must be a string'),
+      next: optionalField(item.next, 500, label + ' next must be a string'),
+    };
+  });
+
+  dashboard.events = requireArray(parsed.events, 'DASHBOARD_JSON.events').map(function (item, index) {
+    const label = 'DASHBOARD_JSON.events item ' + index;
+    requireObject(item, label + ' is not an object');
+    return {
+      date: requireYmd(item.date, label + ' needs a date as YYYY-MM-DD'),
+      title: requireText(item.title, 200, label + ' needs a title string'),
+      lane: requireEnum(item.lane, ['work', 'family'], label + ' needs lane "work" or "family"'),
+    };
+  });
+
+  const today = utcDay(new Date());
+  if (parsed.calendarToday != null && parsed.calendarToday !== '') {
+    dashboard.calendarToday = requireYmd(parsed.calendarToday, 'DASHBOARD_JSON.calendarToday must be YYYY-MM-DD');
+  } else {
+    dashboard.calendarToday = today;
+  }
+  if (parsed.calendarMonth != null && parsed.calendarMonth !== '') {
+    dashboard.calendarMonth = requireYm(parsed.calendarMonth, 'DASHBOARD_JSON.calendarMonth must be YYYY-MM');
+  } else if (parsed.calendarToday) {
+    dashboard.calendarMonth = dashboard.calendarToday.slice(0, 7);
+  } else if (dashboard.events.length) {
+    dashboard.calendarMonth = dashboard.events[0].date.slice(0, 7);
+  } else {
+    dashboard.calendarMonth = today.slice(0, 7);
+  }
+
+  dashboard.bots = requireArray(parsed.bots, 'DASHBOARD_JSON.bots').map(function (item, index) {
+    const label = 'DASHBOARD_JSON.bots item ' + index;
+    requireObject(item, label + ' is not an object');
+    return {
+      bot: requireText(item.bot, 80, label + ' needs a bot string'),
+      focus: requireText(item.focus, 500, label + ' needs a focus string'),
+      last: optionalField(item.last, 120, label + ' last must be a string'),
+      state: requireEnum(item.state, ['you', 'active', 'hold'], label + ' needs state "you", "active", or "hold"'),
+    };
+  });
+
+  dashboard.inbox = requireArray(parsed.inbox, 'DASHBOARD_JSON.inbox').map(function (item, index) {
+    const label = 'DASHBOARD_JSON.inbox item ' + index;
+    requireObject(item, label + ' is not an object');
+    return {
+      label: requireText(item.label, 80, label + ' needs a label string'),
+      value: requireText(item.value, 2000, label + ' needs a value string'),
+    };
+  });
+
+  dashboard.links = requireArray(parsed.links, 'DASHBOARD_JSON.links').map(function (item, index) {
+    const label = 'DASHBOARD_JSON.links item ' + index;
+    requireObject(item, label + ' is not an object');
+    return {
+      title: requireText(item.title, 200, label + ' needs a title string'),
+      href: requireHref(item.href, label + ' needs an http or https href'),
+      site: optionalField(item.site, 80, label + ' site must be a string'),
+    };
+  });
+
+  dashboard.activity = sortActivity(requireArray(parsed.activity, 'DASHBOARD_JSON.activity').map(function (item, index) {
+    const label = 'DASHBOARD_JSON.activity item ' + index;
+    requireObject(item, label + ' is not an object');
+    return {
+      at: requireIso(item.at, label + ' needs an ISO-8601 at time'),
+      who: requireText(item.who, 80, label + ' needs a who string'),
+      text: requireText(item.text, 500, label + ' needs a text string'),
+    };
+  }));
+
+  return dashboard;
+}
+
+function dashboardPayload() {
+  const botsWaiting = DASHBOARD.bots.filter(function (bot) { return bot.state === 'you'; }).length;
+  return {
+    updatedAt: DASHBOARD.updatedAt || null,
+    summary: DASHBOARD.summary || null,
+    inProgress: DASHBOARD.inProgress,
+    done: DASHBOARD.done,
+    deals: DASHBOARD.deals,
+    events: DASHBOARD.events,
+    calendarMonth: DASHBOARD.calendarMonth,
+    calendarToday: DASHBOARD.calendarToday,
+    bots: DASHBOARD.bots,
+    inbox: DASHBOARD.inbox,
+    links: DASHBOARD.links,
+    activity: DASHBOARD.activity,
+    counts: {
+      waiting: ITEMS.length,
+      inProgress: DASHBOARD.inProgress.length,
+      deals: DASHBOARD.deals.length,
+      botsWaiting: botsWaiting,
+    },
+  };
 }
 
 function optionalText(value, max) {
@@ -92,13 +346,16 @@ function validateConfig() {
 }
 
 validateConfig();
-const ITEMS = loadItems();
+const ITEM_FALLBACK = loadItems();
+const DASHBOARD = loadDashboard();
+const ITEMS = DASHBOARD.waiting.length ? DASHBOARD.waiting : ITEM_FALLBACK;
 const doneIds = new Set();
 const attempts = new Map();
 
 const FILES = {
   '/': ['index.html', 'text/html; charset=utf-8', 'no-store'],
   '/app.js': ['app.js', 'text/javascript; charset=utf-8', 'no-store'],
+  '/dashboard-view.js': ['dashboard-view.js', 'text/javascript; charset=utf-8', 'no-store'],
   '/styles.css': ['styles.css', 'text/css; charset=utf-8', 'no-store'],
   '/manifest.webmanifest': ['manifest.webmanifest', 'application/manifest+json; charset=utf-8', 'public, max-age=86400'],
   '/icon.svg': ['icon.svg', 'image/svg+xml', 'public, max-age=86400'],
@@ -477,6 +734,15 @@ async function route(req, res) {
 
   if (path === '/api/logout' && method === 'POST') {
     sendJson(res, 200, { ok: true }, { 'Set-Cookie': cookieHeader('', 0) });
+    return;
+  }
+
+  if (path === '/api/dashboard' && method === 'GET') {
+    if (!authed(req)) {
+      sendJson(res, 401, { ok: false, error: 'Sign in first.' });
+      return;
+    }
+    sendJson(res, 200, dashboardPayload());
     return;
   }
 

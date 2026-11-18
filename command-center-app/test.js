@@ -202,6 +202,34 @@ async function testConfigFailures() {
 
   const badItems = await runNode(baseEnv({ ITEMS_JSON: '{not json' }));
   assert(badItems.code === 1 && badItems.stderr.includes('ITEMS_JSON'), 'startup fails on invalid ITEMS_JSON');
+
+  const sampleDash = JSON.stringify({ waiting: [{ id: 'fake-9', title: 'Example only' }] });
+  const itemsStillChecked = await runNode(baseEnv({
+    ITEMS_JSON: '{not json',
+    DASHBOARD_JSON: sampleDash,
+  }));
+  assert(itemsStillChecked.code === 1 && itemsStillChecked.stderr.includes('ITEMS_JSON'), 'invalid ITEMS_JSON still fails when DASHBOARD_JSON is set');
+
+  const badDashboards = [
+    ['{', 'DASHBOARD_JSON is not valid JSON'],
+    ['[]', 'DASHBOARD_JSON must be a JSON object'],
+    ['null', 'DASHBOARD_JSON must be a JSON object'],
+    [JSON.stringify({ updatedAt: 'yesterday' }), 'DASHBOARD_JSON.updatedAt must be an ISO-8601 time'],
+    [JSON.stringify({ events: [{ date: '2026-02-31', title: 'Example', lane: 'work' }] }), 'YYYY-MM-DD'],
+    [JSON.stringify({ events: [{ date: '2026-11-19', title: 'Example', lane: 'home' }] }), 'lane'],
+    [JSON.stringify({ bots: [{ bot: 'Demo Bot', focus: 'Pretend', state: 'paused' }] }), 'state'],
+    [JSON.stringify({ links: [{ title: 'Example link', href: 'javascript:alert(1)' }] }), 'http or https'],
+    [JSON.stringify({ waiting: [{ id: 'fake-1' }] }), 'needs a string title'],
+    [JSON.stringify({ waiting: [{ id: 'fake-1', title: 'One' }, { id: 'fake-1', title: 'Two' }] }), 'duplicate id'],
+    [JSON.stringify({ inProgress: {} }), 'DASHBOARD_JSON.inProgress must be an array'],
+  ];
+  for (let i = 0; i < badDashboards.length; i++) {
+    const result = await runNode(baseEnv({ DASHBOARD_JSON: badDashboards[i][0] }));
+    assert(result.code === 1 && result.stderr.includes(badDashboards[i][1]), 'startup fails for bad DASHBOARD_JSON case ' + i);
+    assert(result.stderr.includes('DASHBOARD_JSON'), 'startup names DASHBOARD_JSON for case ' + i);
+    assert(!result.stderr.includes(SESSION_SECRET), 'dashboard startup error does not print the session secret');
+    assert(!result.stderr.includes('alert(1)'), 'dashboard startup error does not echo the rejected href');
+  }
 }
 
 async function login(port, passcode) {
@@ -275,6 +303,18 @@ async function testAuthAndList(port, hook) {
   const expired = signedToken(Date.now() - 1000);
   const old = await request(port, 'GET', '/api/items', { cookie: 'nhe_cc=' + expired });
   assert(old.status === 401, 'an expired cookie is rejected');
+
+  const unauthDash = await request(port, 'GET', '/api/dashboard');
+  assert(unauthDash.status === 401, 'dashboard rejects a missing session');
+  assert(!unauthDash.text.includes('family') && !unauthDash.json.events, 'rejected dashboard hides calendar content');
+
+  const dash = await request(port, 'GET', '/api/dashboard', { cookie: cookie });
+  assert(dash.status === 200, 'signed-in dashboard returns 200 without DASHBOARD_JSON');
+  assert(dash.json.events.length === 0 && dash.json.bots.length === 0, 'missing DASHBOARD_JSON yields empty sections');
+  assert(dash.json.counts.waiting === ITEMS.length, 'waiting count follows ITEMS_JSON when dashboard waiting is absent');
+  assert(dash.json.counts.inProgress === 0 && dash.json.counts.deals === 0 && dash.json.counts.botsWaiting === 0, 'other counts are zero without DASHBOARD_JSON');
+  assert(!Object.prototype.hasOwnProperty.call(dash.json, 'waiting'), 'dashboard payload leaves waiting items on /api/items');
+  assert(Object.keys(items.json).length === 1, 'items payload is only the list');
 
   const loggedOut = await request(port, 'POST', '/api/logout', { cookie: cookie });
   assert(loggedOut.status === 200, 'logout returns 200');
@@ -532,6 +572,16 @@ async function startChrome() {
   };
 }
 
+async function waitForReady(ui) {
+  const start = Date.now();
+  while (Date.now() - start < 5000) {
+    const ready = await ui.evalJson('!!(document.getElementById("login-form") && document.getElementById("login-form").dataset.bound === "yes" && window.NheView)');
+    if (ready) return;
+    await sleep(40);
+  }
+  throw new Error('login form was not bound');
+}
+
 async function testUi(port, hook) {
   const ui = await startChrome();
   const shots = {};
@@ -545,6 +595,7 @@ async function testUi(port, hook) {
     await ui.send('Page.enable');
     await ui.send('Page.navigate', { url: 'http://127.0.0.1:' + port + '/' });
     const loginText = await ui.waitForText('Unlock');
+    await waitForReady(ui);
     assert(loginText.includes('NHE Team Command Center'), 'browser shows the login title');
     assert(!loginText.includes('Call the example seller'), 'browser login does not list items');
     shots.login = await ui.send('Page.captureScreenshot', { format: 'png' });
@@ -702,7 +753,409 @@ function writeShots(shots) {
   console.log('screenshots in ' + dir);
 }
 
+function sampleDashboard() {
+  return JSON.parse(fs.readFileSync(__dirname + '/dashboard.example.json', 'utf8'));
+}
+
+async function testViewModel() {
+  const view = require('./public/dashboard-view.js');
+  const sample = sampleDashboard();
+  const html = fs.readFileSync(__dirname + '/public/index.html', 'utf8');
+  const exampleRaw = fs.readFileSync(__dirname + '/dashboard.example.json', 'utf8');
+  assert(!html.includes('Example family event'), 'login HTML does not include the sample family event');
+  assert(!html.includes('123 Sample Street'), 'login HTML does not include the sample deal');
+  assert(!html.includes('Demo Bot'), 'login HTML does not include the sample bot');
+  assert(exampleRaw.indexOf('@') === -1, 'sample dashboard has no email addresses');
+  assert(!/whk_|sk-|BEGIN /.test(exampleRaw), 'sample dashboard has no secret-shaped strings');
+
+  assert(view.inWindow('2026-11-18', '2026-11-18') === true, 'the window includes calendar today');
+  assert(view.inWindow('2026-12-01', '2026-11-18') === true, 'the window includes the 14th day');
+  assert(view.inWindow('2026-12-02', '2026-11-18') === false, 'the window stops after 14 days');
+  assert(view.inWindow('2026-11-17', '2026-11-18') === false, 'the window skips earlier days');
+
+  const all = view.filterEvents(sample.events, sample.calendarToday, 'all');
+  const work = view.filterEvents(sample.events, sample.calendarToday, 'work');
+  const family = view.filterEvents(sample.events, sample.calendarToday, 'family');
+  assert(all.map(function (event) { return event.title; }).join('|') === 'Example work call|Example family event|Another work note', 'all events in the window stay in date order');
+  assert(work.length === 2 && work.every(function (event) { return event.lane === 'work'; }), 'work filter keeps work events');
+  assert(family.length === 1 && family[0].title === 'Example family event', 'family filter keeps the family event');
+
+  const outside = sample.events.concat([{ date: '2026-11-01', title: 'Early example', lane: 'work' }]);
+  const listed = view.filterEvents(outside, sample.calendarToday, 'all');
+  assert(listed.every(function (event) { return event.date !== '2026-11-01'; }), 'an event before the window stays off the list');
+  const month = view.buildMonth('2026-11', '2026-11-18', outside);
+  assert(month.label === 'November 2026', 'month label is November 2026');
+  assert(month.cells[0].day === 1 && month.cells[0].date === '2026-11-01', 'November 2026 starts on Sunday');
+  const early = month.cells.find(function (cell) { return cell && cell.date === '2026-11-01'; });
+  const today = month.cells.find(function (cell) { return cell && cell.date === '2026-11-18'; });
+  const familyDay = month.cells.find(function (cell) { return cell && cell.date === '2026-11-20'; });
+  assert(early.hasEvent === true, 'a day outside the list still marks the month grid');
+  assert(today.isToday === true, 'calendar today is highlighted');
+  assert(familyDay.hasEvent === true, 'a family day is marked on the all-events grid');
+  const workMonth = view.buildMonth('2026-11', '2026-11-18', view.eventsForLane(sample.events, 'work'));
+  const workFamilyDay = workMonth.cells.find(function (cell) { return cell && cell.date === '2026-11-20'; });
+  assert(workFamilyDay.hasEvent === false, 'the work filter removes the family dot');
+
+  const months = view.monthsForWindow('2026-11', '2026-11-18');
+  assert(months.join(',') === '2026-11,2026-12', 'a window that crosses a month shows both months');
+
+  const bots = view.filterBots(sample.bots, 'you');
+  const active = view.filterBots(sample.bots, 'active');
+  const everyBot = view.filterBots(sample.bots, 'all');
+  assert(bots.length === 1 && bots[0].bot === 'Sample Bot', 'waiting-on-you keeps state you');
+  assert(active.length === 1 && active[0].bot === 'Demo Bot', 'active keeps state active');
+  assert(everyBot.length === 3, 'all bots includes the one on hold');
+  assert(view.botPill('you').label === 'Waiting on you' && view.botPill('you').tone === 'warning', 'you pill says Waiting on you');
+  assert(view.botPill('active').label === 'Active' && view.botPill('active').tone === 'done', 'active pill says Active');
+  assert(view.botPill('hold').label === 'On hold' && view.botPill('hold').tone === 'neutral', 'hold pill says On hold');
+
+  const sorted = view.sortActivity([
+    { at: '2026-11-01T00:00:00.000Z', who: 'Sample Bot', text: 'Older pretend note' },
+    { at: '2026-11-02T00:00:00.000Z', who: 'Demo Bot', text: 'Newer pretend note' },
+  ]);
+  assert(sorted[0].text === 'Newer pretend note' && sorted[1].text === 'Older pretend note', 'activity sorts newest first');
+  const stamp = view.formatStamp('2026-11-18T07:27:00.000Z');
+  const when = new Date('2026-11-18T07:27:00.000Z');
+  const short = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][when.getMonth()];
+  assert(stamp.indexOf(short + ' ' + when.getDate()) === 0, 'updated time uses the local month and day');
+}
+
+async function testDashboardData() {
+  const sample = sampleDashboard();
+  const hook = await startWebhook();
+  const port = await freePort();
+  const app = await startApp(baseEnv({
+    PORT: String(port),
+    DASHBOARD_JSON: JSON.stringify(sample),
+    WEBHOOK_URL: 'http://127.0.0.1:' + hook.port + '/hook',
+    WEBHOOK_KEY: WEBHOOK_KEY,
+  }));
+  try {
+    const page = await request(port, 'GET', '/');
+    assert(!page.text.includes('Example family event'), 'served login page hides the family event');
+    assert(!page.text.includes('Demo Bot'), 'served login page hides bot names');
+    const blocked = await request(port, 'GET', '/api/dashboard');
+    assert(blocked.status === 401, 'dashboard with data still requires a session');
+    assert(!blocked.text.includes('Example family event'), '401 dashboard body hides the family event');
+    assert(!blocked.text.includes('123 Sample Street'), '401 dashboard body hides the deal');
+    assert(!/family/i.test(blocked.text), '401 dashboard body does not mention family');
+
+    const cookie = sessionCookie(await login(port, PASSCODE));
+    const items = await request(port, 'GET', '/api/items', { cookie: cookie });
+    assert(items.json.items.length === 2, 'a non-empty dashboard waiting list replaces ITEMS_JSON');
+    assert(items.json.items.map(function (item) { return item.id; }).join(',') === 'fake-1,fake-2', 'dashboard waiting ids are used');
+    assert(items.json.items[0].detail === 'Fictional follow-up about 123 Sample Street.', 'dashboard waiting detail is used');
+    assert(items.json.items[0].status.tone === 'warning', 'dashboard waiting status is preserved');
+    assert(Object.keys(items.json).length === 1, 'items payload stays a list when the dashboard is set');
+
+    const dash = await request(port, 'GET', '/api/dashboard', { cookie: cookie });
+    assert(dash.status === 200, 'signed-in dashboard returns the sample');
+    assert(dash.json.summary === sample.summary, 'dashboard summary is returned');
+    assert(dash.json.updatedAt === sample.updatedAt, 'dashboard updatedAt is returned');
+    assert(dash.json.calendarMonth === '2026-11' && dash.json.calendarToday === '2026-11-18', 'calendar month and today are returned');
+    assert(dash.json.events.some(function (event) { return event.lane === 'family' && event.title === 'Example family event'; }), 'signed-in dashboard includes the family event');
+    assert(dash.json.inProgress.length === 2, 'in progress rows are returned');
+    assert(dash.json.deals[0].deal === '123 Sample Street' && dash.json.deals[0].stage === 'Listing (example)', 'deal fields are returned');
+    assert(dash.json.bots.length === 3, 'bots are returned');
+    assert(dash.json.inbox[0].label === 'Latest work pass', 'inbox rows are returned');
+    assert(dash.json.links[0].href === 'https://example.com', 'quick links are returned');
+    assert(dash.json.activity[0].text === 'Finished a sample job', 'activity stays newest first');
+    assert(dash.json.counts.waiting === 2 && dash.json.counts.inProgress === 2, 'waiting and in-progress counts match the lists');
+    assert(dash.json.counts.deals === 1 && dash.json.counts.botsWaiting === 1, 'deal and bot-waiting counts match the lists');
+    assert(!dash.text.includes(WEBHOOK_KEY) && !dash.text.includes(PASSCODE), 'dashboard JSON hides secrets');
+
+    const sent = await request(port, 'POST', '/api/submit', {
+      cookie: cookie,
+      body: { itemId: 'fake-1', response: 'Left a fictional voicemail.', done: true },
+    });
+    assert(sent.status === 200 && sent.json.done === true, 'submit still marks a dashboard waiting item done');
+    const hit = hook.hits[hook.hits.length - 1];
+    assert(JSON.stringify(Object.keys(hit.json)) === JSON.stringify(['source', 'itemId', 'itemTitle', 'response', 'done', 'sentAt']), 'webhook keys are unchanged');
+    assert(hit.json.source === 'command-center-phone', 'webhook source is unchanged');
+    assert(hit.json.itemId === 'fake-1' && hit.json.itemTitle === 'Call the example seller', 'webhook title still comes from the server list');
+    assert(hit.json.response === 'Left a fictional voicemail.' && hit.json.done === true, 'webhook response and done flag are unchanged');
+    assert(hit.headers.authorization === 'Bearer ' + WEBHOOK_KEY, 'webhook bearer header is unchanged');
+
+    const missing = await request(port, 'POST', '/api/submit', {
+      cookie: cookie,
+      body: { itemId: 'fake-3', response: 'not on this list', done: false },
+    });
+    assert(missing.status === 404, 'an ITEMS_JSON id is rejected when dashboard waiting replaces the list');
+  } finally {
+    await stop(app.child);
+    hook.server.close();
+  }
+
+  const noWaiting = sampleDashboard();
+  delete noWaiting.waiting;
+  const fallbackPort = await freePort();
+  const fallback = await startApp(baseEnv({
+    PORT: String(fallbackPort),
+    DASHBOARD_JSON: JSON.stringify(noWaiting),
+  }));
+  try {
+    const cookie = sessionCookie(await login(fallbackPort, PASSCODE));
+    const items = await request(fallbackPort, 'GET', '/api/items', { cookie: cookie });
+    assert(items.json.items.length === ITEMS.length, 'omitted dashboard waiting falls back to ITEMS_JSON');
+    assert(items.json.items[0].detail.indexOf('555-0100') !== -1, 'fallback items keep the ITEMS_JSON detail');
+    const dash = await request(fallbackPort, 'GET', '/api/dashboard', { cookie: cookie });
+    assert(dash.json.deals.length === 1 && dash.json.events.length === 3, 'other sections still load when waiting is omitted');
+  } finally {
+    await stop(fallback.child);
+  }
+
+  const emptyWaitingPort = await freePort();
+  const emptyWaiting = await startApp(baseEnv({
+    PORT: String(emptyWaitingPort),
+    DASHBOARD_JSON: JSON.stringify({ waiting: [], deals: [{ deal: '123 Sample Street' }] }),
+  }));
+  try {
+    const cookie = sessionCookie(await login(emptyWaitingPort, PASSCODE));
+    const items = await request(emptyWaitingPort, 'GET', '/api/items', { cookie: cookie });
+    assert(items.json.items.length === ITEMS.length, 'an empty dashboard waiting array falls back to ITEMS_JSON');
+  } finally {
+    await stop(emptyWaiting.child);
+  }
+
+  const nonePort = await freePort();
+  const none = await startApp(baseEnv({
+    PORT: String(nonePort),
+    ITEMS_JSON: '[]',
+    DASHBOARD_JSON: JSON.stringify({ waiting: [] }),
+  }));
+  try {
+    const cookie = sessionCookie(await login(nonePort, PASSCODE));
+    const items = await request(nonePort, 'GET', '/api/items', { cookie: cookie });
+    assert(items.json.items.length === 0, 'empty dashboard waiting and empty ITEMS_JSON yield no waiting items');
+  } finally {
+    await stop(none.child);
+  }
+
+  const customPort = await freePort();
+  const custom = await startApp(baseEnv({
+    PORT: String(customPort),
+    DASHBOARD_JSON: JSON.stringify({
+      extra: 'ignored',
+      calendarToday: '2026-12-02',
+      activity: [
+        { at: '2026-11-01T00:00:00.000Z', who: 'Sample Bot', text: 'Older pretend note' },
+        { at: '2026-11-02T00:00:00.000Z', who: 'Demo Bot', text: 'Newer pretend note' },
+      ],
+      done: [
+        { text: 'Sample task completed' },
+        { text: 'Left open on purpose', done: false },
+      ],
+      events: [{ date: '2026-11-19', title: 'Example work call', lane: 'work' }],
+    }),
+  }));
+  try {
+    const cookie = sessionCookie(await login(customPort, PASSCODE));
+    const dash = await request(customPort, 'GET', '/api/dashboard', { cookie: cookie });
+    assert(dash.status === 200, 'unknown dashboard keys are ignored');
+    assert(dash.json.activity[0].text === 'Newer pretend note', 'the server sorts activity newest first');
+    assert(dash.json.done[0].done === true && dash.json.done[1].done === false, 'done defaults to true unless set false');
+    assert(dash.json.calendarMonth === '2026-12' && dash.json.calendarToday === '2026-12-02', 'calendar month defaults from calendarToday');
+    const items = await request(customPort, 'GET', '/api/items', { cookie: cookie });
+    assert(items.json.items.length === ITEMS.length, 'dashboard data without waiting keeps ITEMS_JSON');
+  } finally {
+    await stop(custom.child);
+  }
+
+  const blankPort = await freePort();
+  const blank = await startApp(baseEnv({
+    PORT: String(blankPort),
+    DASHBOARD_JSON: '   ',
+  }));
+  try {
+    const cookie = sessionCookie(await login(blankPort, PASSCODE));
+    const items = await request(blankPort, 'GET', '/api/items', { cookie: cookie });
+    const dash = await request(blankPort, 'GET', '/api/dashboard', { cookie: cookie });
+    assert(items.json.items.length === ITEMS.length, 'blank DASHBOARD_JSON falls back to ITEMS_JSON');
+    assert(dash.json.events.length === 0, 'blank DASHBOARD_JSON does not invent events');
+    assert(dash.json.calendarToday === new Date().toISOString().slice(0, 10), 'calendar today defaults to the UTC date');
+  } finally {
+    await stop(blank.child);
+  }
+}
+
+async function testDashboardUi(port, hook) {
+  const ui = await startChrome();
+  const shots = {};
+  try {
+    await ui.send('Emulation.setDeviceMetricsOverride', {
+      width: 390,
+      height: 844,
+      deviceScaleFactor: 2,
+      mobile: true,
+    });
+    await ui.send('Page.enable');
+    await ui.send('Page.navigate', { url: 'http://127.0.0.1:' + port + '/' });
+    const loginText = await ui.waitForText('Unlock');
+    await waitForReady(ui);
+    assert(!loginText.includes('Example family event'), 'browser login hides the family event');
+    assert(!loginText.includes('Demo Bot'), 'browser login hides bot names');
+    assert(!loginText.includes('123 Sample Street'), 'browser login hides the deal');
+
+    await ui.evalJson("document.getElementById('passcode').value = " + JSON.stringify(PASSCODE) + "; document.getElementById('login-form').requestSubmit(); true");
+    const board = await ui.waitForText('Latest team activity');
+    assert(board.includes('2 items waiting on you'), 'dashboard waiting count is the open list');
+    assert(board.includes('Sample dashboard for tests'), 'dashboard summary is shown');
+    assert(board.includes('Finished a sample job'), 'activity feed shows the newest sample');
+    assert(board.includes('In progress'), 'in progress section is shown');
+    assert(board.includes('Recently done'), 'recently done section is shown');
+    assert(board.includes('Deals'), 'deals section is shown');
+    assert(board.includes('Next two weeks'), 'calendar section is shown');
+    assert(board.includes('What each bot is doing'), 'bots section is shown');
+    assert(board.includes('Inbox'), 'inbox section is shown');
+    assert(board.includes('Quick links'), 'quick links section is shown');
+    assert(board.includes('Example family event'), 'family event is visible only after sign-in');
+    assert(board.includes('Call the example seller'), 'waiting rows still render from the dashboard list');
+    assert(board.includes('Respond'), 'Respond stays on waiting items');
+
+    const counts = await ui.evalJson([
+      '(function () {',
+      '  return {',
+      '    waiting: document.getElementById("count-waiting").textContent,',
+      '    progress: document.getElementById("count-progress").textContent,',
+      '    deals: document.getElementById("count-deals").textContent,',
+      '    bots: document.getElementById("count-bots").textContent,',
+      '    updated: document.getElementById("updated").textContent,',
+      '    stamp: document.getElementById("updated").dataset.updated,',
+      '    sections: Array.from(document.querySelectorAll(".section-updated")).every(function (node) {',
+      '      return node.textContent === document.getElementById("updated").textContent;',
+      '    })',
+      '  };',
+      '})()',
+    ].join('\n'));
+    assert(counts.waiting === '2' && counts.progress === '2' && counts.deals === '1' && counts.bots === '1', 'top counts match the sample');
+    assert(counts.stamp === '2026-11-18T07:27:00.000Z', 'updated time keeps the source timestamp');
+    assert(counts.updated.indexOf('Updated ') === 0 && counts.sections === true, 'each section shows the same updated time');
+    shots.board = await ui.send('Page.captureScreenshot', { format: 'png' });
+
+    await ui.evalJson('document.querySelector(\'#cal-chips [data-lane="work"]\').click()');
+    const workTitles = await ui.evalJson('Array.from(document.querySelectorAll("#event-list .title")).map(function (node) { return node.textContent; })');
+    const workDots = await ui.evalJson([
+      '(function () {',
+      '  const family = document.querySelector(\'[data-date="2026-11-20"]\');',
+      '  const work = document.querySelector(\'[data-date="2026-11-19"]\');',
+      '  return {',
+      '    family: family.classList.contains("has-event"),',
+      '    work: work.classList.contains("has-event"),',
+      '    today: document.querySelector(\'[data-date="2026-11-18"]\').classList.contains("is-today"),',
+      '    december: document.body.innerText.indexOf("December 2026") !== -1',
+      '  };',
+      '})()',
+    ].join('\n'));
+    assert(workTitles.indexOf('Example work call') !== -1 && workTitles.indexOf('Example family event') === -1, 'work filter hides the family event');
+    assert(workDots.family === false && workDots.work === true, 'work filter drops the family day dot');
+    assert(workDots.today === true && workDots.december === true, 'today is highlighted and the crossing month is shown');
+
+    await ui.evalJson('document.querySelector(\'#cal-chips [data-lane="family"]\').click()');
+    const familyTitles = await ui.evalJson('Array.from(document.querySelectorAll("#event-list .title")).map(function (node) { return node.textContent; })');
+    assert(familyTitles.join('|') === 'Example family event', 'family filter shows only the family event');
+    await ui.evalJson('document.getElementById("calendar-section").scrollIntoView({ block: "start" })');
+    await sleep(100);
+    shots.calendar = await ui.send('Page.captureScreenshot', { format: 'png' });
+
+    await ui.evalJson('document.querySelector(\'#cal-chips [data-lane="all"]\').click()');
+    const allTitles = await ui.evalJson('Array.from(document.querySelectorAll("#event-list .title")).map(function (node) { return node.textContent; })');
+    assert(allTitles.length === 3, 'all filter restores every event in the window');
+
+    const pills = await ui.evalJson([
+      '(function () {',
+      '  function pill(state) {',
+      '    const node = document.querySelector(\'#bot-list [data-state="\' + state + \'"] .pill\');',
+      '    return node ? node.textContent : "";',
+      '  }',
+      '  return { you: pill("you"), active: pill("active"), hold: pill("hold") };',
+      '})()',
+    ].join('\n'));
+    assert(pills.you === 'Waiting on you' && pills.active === 'Active' && pills.hold === 'On hold', 'bot status pills use the three labels');
+
+    await ui.evalJson('document.querySelector(\'#bot-chips [data-bot-filter="you"]\').click()');
+    const youBots = await ui.evalJson('Array.from(document.querySelectorAll("#bot-list .title")).map(function (node) { return node.textContent; })');
+    assert(youBots.join('|') === 'Sample Bot', 'waiting-on-you filter shows the bot that needs a fake OK');
+    await ui.evalJson('document.querySelector(\'#bot-chips [data-bot-filter="active"]\').click()');
+    const activeBots = await ui.evalJson('Array.from(document.querySelectorAll("#bot-list .title")).map(function (node) { return node.textContent; })');
+    assert(activeBots.join('|') === 'Demo Bot', 'active filter shows the active bot');
+    await ui.evalJson('document.querySelector(\'#bot-chips [data-bot-filter="all"]\').click()');
+    const allBots = await ui.evalJson('Array.from(document.querySelectorAll("#bot-list [data-state]")).map(function (node) { return node.dataset.state; })');
+    assert(allBots.join(',') === 'active,you,hold', 'all bots shows active, waiting, and hold');
+    await ui.evalJson('document.getElementById("bots-section").scrollIntoView({ block: "start" })');
+    await sleep(100);
+    shots.bots = await ui.send('Page.captureScreenshot', { format: 'png' });
+
+    const link = await ui.evalJson([
+      '(function () {',
+      '  const node = document.querySelector("#links-list a");',
+      '  return { href: node.getAttribute("href"), target: node.target, rel: node.rel, title: node.querySelector(".title").textContent };',
+      '})()',
+    ].join('\n'));
+    assert(link.href === 'https://example.com' && link.title === 'Example link', 'quick link points at the sample URL');
+    assert(link.target === '_blank' && link.rel.indexOf('noopener') !== -1, 'quick link opens in a new tab without the opener');
+
+    const before = hook.hits.length;
+    await ui.evalJson('document.querySelector(\'#waiting-list [data-id="fake-2"] input[type="checkbox"]\').click()');
+    await ui.waitForText('Marked done.');
+    const placed = await ui.evalJson([
+      '(function () {',
+      '  return {',
+      '    open: !!document.querySelector(\'#waiting-list [data-id="fake-2"]\'),',
+      '    done: !!document.querySelector(\'#done-list [data-id="fake-2"]\'),',
+      '    recent: document.getElementById("recent-list").textContent.indexOf("Review the demo offer") !== -1,',
+      '    count: document.getElementById("count-waiting").textContent,',
+      '    summary: document.getElementById("summary").textContent',
+      '  };',
+      '})()',
+    ].join('\n'));
+    assert(placed.open === false && placed.done === true, 'Done still moves a dashboard waiting row into Done');
+    assert(placed.recent === false, 'the phone Done row is not copied into Recently done');
+    assert(placed.count === '1' && placed.summary === '1 item waiting on you', 'the waiting count drops when an item is marked done');
+    const toggleHit = hook.hits[hook.hits.length - 1];
+    assert(hook.hits.length === before + 1, 'the Done switch still calls the webhook once');
+    assert(toggleHit.json.itemId === 'fake-2' && toggleHit.json.done === true && toggleHit.json.response === '', 'the Done switch payload is unchanged');
+    assert(toggleHit.json.source === 'command-center-phone' && toggleHit.json.itemTitle === 'Review the demo offer', 'the Done switch still sends the server title');
+
+    await ui.send('Emulation.setDeviceMetricsOverride', {
+      width: 1280,
+      height: 800,
+      deviceScaleFactor: 1,
+      mobile: false,
+    });
+    await ui.evalJson('window.scrollTo(0, 0)');
+    await sleep(100);
+    const xs = await ui.evalJson('Array.from(document.querySelectorAll(".count")).map(function (node) { return Math.round(node.getBoundingClientRect().x); })');
+    assert(xs[0] < xs[1] && xs[1] < xs[2] && xs[2] < xs[3], 'counts sit in a row on a wide screen');
+    shots.desktop = await ui.send('Page.captureScreenshot', { format: 'png' });
+
+    await ui.evalJson('document.getElementById("logout").click()');
+    await ui.waitForText('Unlock');
+    const cleared = await ui.evalJson([
+      '(function () {',
+      '  return {',
+      '    events: document.getElementById("event-list").textContent,',
+      '    bots: document.getElementById("bot-list").textContent,',
+      '    deals: document.getElementById("deals-list").textContent,',
+      '    body: document.body.innerText',
+      '  };',
+      '})()',
+    ].join('\n'));
+    assert(cleared.events === '' && cleared.bots === '' && cleared.deals === '', 'logout clears calendar, bot, and deal text');
+    assert(cleared.body.indexOf('Example family event') === -1, 'logout hides the family event again');
+    return shots;
+  } catch (err) {
+    try {
+      const shot = await ui.send('Page.captureScreenshot', { format: 'png' });
+      fs.writeFileSync('/tmp/cc-dashboard-failure.png', Buffer.from(shot.data, 'base64'));
+    } catch (shotErr) { /* ignore */ }
+    throw err;
+  } finally {
+    await ui.close();
+  }
+}
+
 async function main() {
+  await testViewModel();
   await testConfigFailures();
   const hook = await startWebhook();
   const port = await freePort();
@@ -714,7 +1167,9 @@ async function main() {
   let ui = null;
   try {
     const client = fs.readFileSync(__dirname + '/public/app.js', 'utf8');
+    const viewSource = fs.readFileSync(__dirname + '/public/dashboard-view.js', 'utf8');
     assert(!client.includes('innerHTML') && !client.includes('insertAdjacentHTML'), 'client renders item text without HTML injection');
+    assert(!viewSource.includes('innerHTML') && !viewSource.includes('insertAdjacentHTML'), 'view helper does not build HTML strings');
     await testAuthAndList(port, hook);
     const uiResult = await testUi(port, hook);
     ui = uiResult.ui;
@@ -737,6 +1192,24 @@ async function main() {
   }
   await testCustomHeader();
   await testMissingWebhook();
+  await testDashboardData();
+
+  const sample = sampleDashboard();
+  const dashHook = await startWebhook();
+  const dashPort = await freePort();
+  const dashApp = await startApp(baseEnv({
+    PORT: String(dashPort),
+    DASHBOARD_JSON: JSON.stringify(sample),
+    WEBHOOK_URL: 'http://127.0.0.1:' + dashHook.port + '/hook',
+    WEBHOOK_KEY: WEBHOOK_KEY,
+  }));
+  try {
+    const shots = await testDashboardUi(dashPort, dashHook);
+    writeShots(shots);
+  } finally {
+    await stop(dashApp.child);
+    dashHook.server.close();
+  }
   console.log('all checks passed');
 }
 

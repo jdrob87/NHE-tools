@@ -26,9 +26,29 @@
   const backdrop = document.getElementById('sheet-backdrop');
 
   let items = [];
+  let dashboard = blankDashboard();
+  let calLane = 'all';
+  let botFilter = 'all';
   let sheetId = null;
   let recognition = null;
   let recording = false;
+
+  function blankDashboard() {
+    return {
+      updatedAt: null,
+      summary: null,
+      inProgress: [],
+      done: [],
+      deals: [],
+      events: [],
+      calendarMonth: '',
+      calendarToday: '',
+      bots: [],
+      inbox: [],
+      links: [],
+      activity: [],
+    };
+  }
 
   function readDone() {
     try {
@@ -71,10 +91,20 @@
 
   function showLogin(message) {
     closeSheet();
+    clearBoard();
     appView.hidden = true;
     loginView.hidden = false;
     setMessage(loginError, message ? 'err' : '', message || '');
     passcodeInput.focus();
+  }
+
+  function clearBoard() {
+    items = [];
+    dashboard = blankDashboard();
+    calLane = 'all';
+    botFilter = 'all';
+    syncChips();
+    render();
   }
 
   function badgeText(item, position, done) {
@@ -150,6 +180,267 @@
     return row;
   }
 
+  function syncChips() {
+    document.querySelectorAll('#cal-chips .chip').forEach(function (chip) {
+      chip.setAttribute('aria-pressed', chip.dataset.lane === calLane ? 'true' : 'false');
+    });
+    document.querySelectorAll('#bot-chips .chip').forEach(function (chip) {
+      chip.setAttribute('aria-pressed', chip.dataset.botFilter === botFilter ? 'true' : 'false');
+    });
+  }
+
+  function safeHref(value) {
+    if (typeof value !== 'string') return '';
+    const trimmed = value.trim();
+    try {
+      const url = new URL(trimmed);
+      if (url.protocol !== 'http:' && url.protocol !== 'https:') return '';
+      return trimmed;
+    } catch (err) {
+      return '';
+    }
+  }
+
+  function fillList(listId, emptyId, nodes) {
+    const list = document.getElementById(listId);
+    const empty = document.getElementById(emptyId);
+    list.replaceChildren.apply(list, nodes);
+    const none = nodes.length === 0;
+    list.hidden = none;
+    empty.hidden = !none;
+  }
+
+  function feedRow() {
+    const row = document.createElement('article');
+    row.className = 'row feed';
+    const body = document.createElement('div');
+    row.appendChild(body);
+    return { row: row, body: body };
+  }
+
+  function addTitle(body, text, pill) {
+    const titleLine = document.createElement('div');
+    titleLine.className = 'title-line';
+    const title = document.createElement('h3');
+    title.className = 'title';
+    title.textContent = text;
+    titleLine.appendChild(title);
+    if (pill && pill.label) {
+      const node = document.createElement('span');
+      node.className = 'pill ' + (pill.tone || 'neutral');
+      node.textContent = pill.label;
+      titleLine.appendChild(node);
+    }
+    body.appendChild(titleLine);
+  }
+
+  function addLine(body, className, text) {
+    if (!text) return;
+    const node = document.createElement('p');
+    node.className = className;
+    node.textContent = text;
+    body.appendChild(node);
+  }
+
+  function paintUpdated() {
+    const stamp = dashboard && dashboard.updatedAt && window.NheView
+      ? window.NheView.formatStamp(dashboard.updatedAt)
+      : '';
+    const updated = document.getElementById('updated');
+    if (stamp) {
+      updated.textContent = 'Updated ' + stamp;
+      updated.dataset.updated = dashboard.updatedAt;
+    } else {
+      updated.textContent = '';
+      delete updated.dataset.updated;
+    }
+    document.querySelectorAll('.section-updated').forEach(function (node) {
+      node.textContent = stamp ? 'Updated ' + stamp : '';
+    });
+    const dashSummary = document.getElementById('dash-summary');
+    if (dashboard && dashboard.summary) {
+      dashSummary.hidden = false;
+      dashSummary.textContent = dashboard.summary;
+    } else {
+      dashSummary.hidden = true;
+      dashSummary.textContent = '';
+    }
+  }
+
+  function paintCounts() {
+    let waiting = 0;
+    items.forEach(function (item) {
+      if (!isDone(item)) waiting += 1;
+    });
+    document.getElementById('count-waiting').textContent = String(waiting);
+    const progress = dashboard && dashboard.inProgress ? dashboard.inProgress.length : 0;
+    const deals = dashboard && dashboard.deals ? dashboard.deals.length : 0;
+    const botsWaiting = dashboard && dashboard.bots
+      ? dashboard.bots.filter(function (bot) { return bot.state === 'you'; }).length
+      : 0;
+    document.getElementById('count-progress').textContent = String(progress);
+    document.getElementById('count-deals').textContent = String(deals);
+    document.getElementById('count-bots').textContent = String(botsWaiting);
+  }
+
+  function renderActivity() {
+    const rows = window.NheView.sortActivity(dashboard.activity || []).map(function (item) {
+      const card = feedRow();
+      const when = window.NheView.formatStamp(item.at);
+      addLine(card.body, 'meta', when ? item.who + ' · ' + when : item.who);
+      addTitle(card.body, item.text);
+      return card.row;
+    });
+    fillList('activity-list', 'activity-empty', rows);
+  }
+
+  function renderProgress() {
+    const rows = (dashboard.inProgress || []).map(function (item) {
+      const card = feedRow();
+      addTitle(card.body, item.who);
+      addLine(card.body, 'detail', item.what);
+      addLine(card.body, 'meta', item.last);
+      return card.row;
+    });
+    fillList('progress-list', 'progress-empty', rows);
+  }
+
+  function renderRecent() {
+    const rows = (dashboard.done || []).map(function (item) {
+      const card = feedRow();
+      if (item.done !== false) card.row.classList.add('is-done');
+      addTitle(card.body, item.text, item.done === false ? null : { label: 'Done', tone: 'done' });
+      addLine(card.body, 'meta', item.meta);
+      return card.row;
+    });
+    fillList('recent-list', 'recent-empty', rows);
+  }
+
+  function renderDeals() {
+    const rows = (dashboard.deals || []).map(function (item) {
+      const card = feedRow();
+      addTitle(card.body, item.deal, item.stage ? { label: item.stage, tone: 'neutral' } : null);
+      addLine(card.body, 'detail', item.stands);
+      addLine(card.body, 'meta', item.next ? 'Next: ' + item.next : '');
+      return card.row;
+    });
+    fillList('deals-list', 'deals-empty', rows);
+  }
+
+  function renderMonth(model) {
+    const wrap = document.createElement('div');
+    wrap.className = 'month';
+    const label = document.createElement('p');
+    label.className = 'month-label';
+    label.textContent = model.label;
+    const grid = document.createElement('div');
+    grid.className = 'cal-grid';
+    ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'].forEach(function (name) {
+      const cell = document.createElement('div');
+      cell.className = 'cal-dow';
+      cell.textContent = name;
+      grid.appendChild(cell);
+    });
+    model.cells.forEach(function (cell) {
+      const node = document.createElement('div');
+      node.className = 'cal-cell';
+      if (!cell) {
+        node.classList.add('is-empty');
+        grid.appendChild(node);
+        return;
+      }
+      node.textContent = String(cell.day);
+      node.dataset.date = cell.date;
+      if (cell.isToday) node.classList.add('is-today');
+      if (cell.hasEvent) node.classList.add('has-event');
+      grid.appendChild(node);
+    });
+    wrap.append(label, grid);
+    return wrap;
+  }
+
+  function renderCalendar() {
+    const view = window.NheView;
+    const events = dashboard.events || [];
+    const laneEvents = view.eventsForLane(events, calLane);
+    const months = view.monthsForWindow(dashboard.calendarMonth, dashboard.calendarToday);
+    const grids = document.getElementById('calendar-grids');
+    grids.replaceChildren.apply(grids, months.map(function (month) {
+      return renderMonth(view.buildMonth(month, dashboard.calendarToday, laneEvents));
+    }));
+    const rows = view.filterEvents(events, dashboard.calendarToday, calLane).map(function (event) {
+      const card = feedRow();
+      card.row.dataset.lane = event.lane;
+      card.row.dataset.date = event.date;
+      addTitle(card.body, event.title, {
+        label: event.lane === 'family' ? 'Family' : 'Work',
+        tone: event.lane === 'family' ? 'warning' : 'neutral',
+      });
+      addLine(card.body, 'meta', event.date);
+      return card.row;
+    });
+    fillList('event-list', 'event-empty', rows);
+  }
+
+  function renderBots() {
+    const rows = window.NheView.filterBots(dashboard.bots || [], botFilter).map(function (bot) {
+      const card = feedRow();
+      card.row.dataset.state = bot.state;
+      addTitle(card.body, bot.bot, window.NheView.botPill(bot.state));
+      addLine(card.body, 'detail', bot.focus);
+      addLine(card.body, 'meta', bot.last);
+      return card.row;
+    });
+    fillList('bot-list', 'bot-empty', rows);
+  }
+
+  function renderInbox() {
+    const rows = (dashboard.inbox || []).map(function (item) {
+      const card = feedRow();
+      addLine(card.body, 'meta', item.label);
+      addLine(card.body, 'detail', item.value);
+      return card.row;
+    });
+    fillList('inbox-list', 'inbox-empty', rows);
+  }
+
+  function renderLinks() {
+    const rows = (dashboard.links || []).map(function (item) {
+      const href = safeHref(item.href);
+      if (!href) return null;
+      const link = document.createElement('a');
+      link.className = 'link-row';
+      link.href = href;
+      link.target = '_blank';
+      link.rel = 'noopener noreferrer';
+      const title = document.createElement('h3');
+      title.className = 'title';
+      title.textContent = item.title;
+      link.appendChild(title);
+      if (item.site) {
+        const site = document.createElement('p');
+        site.className = 'link-site';
+        site.textContent = item.site;
+        link.appendChild(site);
+      }
+      return link;
+    }).filter(function (node) { return !!node; });
+    fillList('links-list', 'links-empty', rows);
+  }
+
+  function renderDashboard() {
+    if (!window.NheView || !dashboard) return;
+    paintUpdated();
+    renderActivity();
+    renderProgress();
+    renderRecent();
+    renderDeals();
+    renderCalendar();
+    renderBots();
+    renderInbox();
+    renderLinks();
+  }
+
   function render() {
     const waiting = [];
     const finished = [];
@@ -169,6 +460,8 @@
     empty.hidden = waiting.length !== 0;
     waitingList.hidden = waiting.length === 0;
     doneSection.hidden = finished.length === 0;
+    paintCounts();
+    renderDashboard();
   }
 
   async function setDone(item, want) {
@@ -357,6 +650,20 @@
       return;
     }
     items = result.data.items || [];
+    const dashResult = await api('/api/dashboard');
+    if (dashResult.status === 401) {
+      showLogin('Your session expired. Enter the passcode again.');
+      return;
+    }
+    if (!dashResult.ok) {
+      dashboard = blankDashboard();
+      setMessage(banner, 'err', (dashResult.data && dashResult.data.error) || 'Could not load the dashboard.');
+    } else {
+      dashboard = dashResult.data || blankDashboard();
+    }
+    calLane = 'all';
+    botFilter = 'all';
+    syncChips();
     const ids = readDone();
     items.forEach(function (item) {
       if (item.done) ids.add(item.id);
@@ -365,6 +672,7 @@
     render();
   }
 
+  loginForm.dataset.bound = 'yes';
   loginForm.addEventListener('submit', async function (event) {
     event.preventDefault();
     setMessage(loginError, '', '');
@@ -392,6 +700,22 @@
     closeSheet();
     try { await api('/api/logout', { method: 'POST', body: '{}' }); } catch (err) { /* still lock the screen */ }
     showLogin('');
+  });
+
+  document.getElementById('cal-chips').addEventListener('click', function (event) {
+    const button = event.target.closest('button');
+    if (!button || !button.dataset.lane) return;
+    calLane = button.dataset.lane;
+    syncChips();
+    renderDashboard();
+  });
+
+  document.getElementById('bot-chips').addEventListener('click', function (event) {
+    const button = event.target.closest('button');
+    if (!button || !button.dataset.botFilter) return;
+    botFilter = button.dataset.botFilter;
+    syncChips();
+    renderDashboard();
   });
 
   mic.addEventListener('click', function () {
