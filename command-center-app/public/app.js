@@ -6,21 +6,35 @@
   const passcodeInput = document.getElementById('passcode');
   const loginError = document.getElementById('login-error');
   const banner = document.getElementById('banner');
-  const openList = document.getElementById('open-list');
+  const summary = document.getElementById('summary');
+  const waitingList = document.getElementById('waiting-list');
   const doneList = document.getElementById('done-list');
   const doneSection = document.getElementById('done-section');
-  const doneHeading = document.getElementById('done-heading');
-  const toggleDone = document.getElementById('toggle-done');
   const empty = document.getElementById('empty');
   const logout = document.getElementById('logout');
+  const sheetRoot = document.getElementById('sheet-root');
+  const sheet = document.getElementById('sheet');
+  const sheetTitle = document.getElementById('sheet-title');
+  const sheetText = document.getElementById('sheet-text');
+  const sheetInterim = document.getElementById('sheet-interim');
+  const sheetError = document.getElementById('sheet-error');
+  const sheetSend = document.getElementById('sheet-send');
+  const alsoDone = document.getElementById('also-done');
+  const mic = document.getElementById('mic');
+  const micHint = document.getElementById('mic-hint');
+  const recState = document.getElementById('rec-state');
+  const backdrop = document.getElementById('sheet-backdrop');
 
-  let showDone = false;
+  let items = [];
+  let sheetId = null;
+  let recognition = null;
+  let recording = false;
 
   function readDone() {
     try {
       const parsed = JSON.parse(localStorage.getItem(DONE_KEY) || '[]');
       if (!Array.isArray(parsed)) return new Set();
-      return new Set(parsed.filter((id) => typeof id === 'string'));
+      return new Set(parsed.filter(function (id) { return typeof id === 'string'; }));
     } catch (err) {
       return new Set();
     }
@@ -39,6 +53,10 @@
     node.textContent = text || '';
   }
 
+  function speechCtor() {
+    return window.SpeechRecognition || window.webkitSpeechRecognition || null;
+  }
+
   async function api(path, options) {
     const res = await fetch(path, {
       method: (options && options.method) || 'GET',
@@ -47,139 +65,282 @@
       credentials: 'same-origin',
     });
     let data = {};
-    try {
-      data = await res.json();
-    } catch (err) {
-      data = {};
-    }
+    try { data = await res.json(); } catch (err) { data = {}; }
     return { ok: res.ok, status: res.status, data: data };
   }
 
   function showLogin(message) {
+    closeSheet();
     appView.hidden = true;
     loginView.hidden = false;
     setMessage(loginError, message ? 'err' : '', message || '');
     passcodeInput.focus();
   }
 
-  function refreshChrome() {
-    const openCount = openList.children.length;
-    const doneCount = doneList.children.length;
-    empty.hidden = openCount !== 0;
-    doneSection.hidden = doneCount === 0;
-    doneHeading.textContent = 'Sent / done';
-    doneList.hidden = !showDone;
-    toggleDone.textContent = showDone ? 'Hide done' : 'Show done';
-    toggleDone.setAttribute('aria-expanded', showDone ? 'true' : 'false');
-    if (doneCount === 0) showDone = false;
+  function badgeText(item, position, done) {
+    if (done) return '\u2713';
+    if (item.lead) return item.lead;
+    return String(position);
   }
 
-  function renderCard(item) {
-    const card = document.createElement('article');
-    card.className = 'card';
-    card.dataset.id = item.id;
+  function renderRow(item, position, done) {
+    const row = document.createElement('article');
+    row.className = done ? 'row is-done' : 'row';
+    row.dataset.id = item.id;
 
-    const title = document.createElement('h2');
+    const badge = document.createElement('div');
+    badge.className = 'badge';
+    badge.textContent = badgeText(item, position, done);
+    if (done) badge.setAttribute('aria-label', 'Done');
+
+    const body = document.createElement('div');
+    const titleLine = document.createElement('div');
+    titleLine.className = 'title-line';
+    const title = document.createElement('h3');
+    title.className = 'title';
     title.textContent = item.title;
+    titleLine.appendChild(title);
+    if (item.status && item.status.label) {
+      const pill = document.createElement('span');
+      pill.className = 'pill ' + (item.status.tone || 'neutral');
+      pill.textContent = item.status.label;
+      titleLine.appendChild(pill);
+    }
 
     const detail = document.createElement('p');
     detail.className = 'detail';
     detail.textContent = item.detail || '';
     detail.hidden = !item.detail;
 
-    const label = document.createElement('label');
-    const span = document.createElement('span');
-    span.className = 'field-label';
-    span.textContent = 'Response';
-    const area = document.createElement('textarea');
-    area.maxLength = 8000;
-    area.rows = 4;
-    area.placeholder = 'Type or dictate a response';
-    area.setAttribute('aria-label', 'Response for ' + item.title);
-    label.append(span, area);
+    const meta = document.createElement('p');
+    meta.className = 'meta';
+    meta.textContent = item.meta || '';
+    meta.hidden = !item.meta;
 
     const actions = document.createElement('div');
-    actions.className = 'actions';
-    const send = document.createElement('button');
-    send.type = 'button';
-    send.className = 'secondary';
-    send.dataset.action = 'send';
-    send.textContent = 'Send';
-    const doneBtn = document.createElement('button');
-    doneBtn.type = 'button';
-    doneBtn.className = 'primary actions-btn';
-    doneBtn.dataset.action = 'done';
-    doneBtn.textContent = 'Send + done';
-    actions.append(send, doneBtn);
+    actions.className = 'row-actions';
+    const respond = document.createElement('button');
+    respond.type = 'button';
+    respond.className = 'respond';
+    respond.textContent = 'Respond';
+    respond.addEventListener('click', function () { openSheet(item.id); });
 
-    const status = document.createElement('p');
-    status.className = 'card-status message';
-    status.setAttribute('role', 'status');
+    const switchLabel = document.createElement('label');
+    switchLabel.className = 'switch';
+    const switchName = document.createElement('span');
+    switchName.className = 'switch-name';
+    switchName.textContent = 'Done';
+    const input = document.createElement('input');
+    input.type = 'checkbox';
+    input.setAttribute('role', 'switch');
+    input.setAttribute('aria-label', 'Done');
+    input.checked = done;
+    const track = document.createElement('span');
+    track.className = 'track';
+    switchLabel.append(switchName, input, track);
+    input.addEventListener('change', function () {
+      const want = input.checked;
+      input.disabled = true;
+      setDone(item, want);
+    });
 
-    card.append(title, detail, label, actions, status);
-
-    async function submit(markDone) {
-      const response = area.value.trim();
-      if (!response) {
-        setMessage(status, 'err', 'Write a response before sending.');
-        area.focus();
-        return;
-      }
-      send.disabled = true;
-      doneBtn.disabled = true;
-      setMessage(status, '', '');
-      try {
-        const result = await api('/api/submit', {
-          method: 'POST',
-          body: JSON.stringify({ itemId: item.id, response: response, done: markDone }),
-        });
-        if (result.status === 401) {
-          showLogin('Your session expired. Enter the passcode again.');
-          return;
-        }
-        if (!result.ok) {
-          const message = (result.data && result.data.error) || 'Could not send that response.';
-          setMessage(status, 'err', message);
-          setMessage(banner, 'err', message);
-          return;
-        }
-        area.value = '';
-        if (markDone) {
-          const ids = readDone();
-          ids.add(item.id);
-          writeDone(ids);
-          item.done = true;
-          doneList.appendChild(card);
-          setMessage(status, 'ok', 'Sent and marked done.');
-          setMessage(banner, 'ok', 'Sent and marked done.');
-        } else {
-          setMessage(status, 'ok', 'Sent to your assistant.');
-          setMessage(banner, 'ok', 'Sent to your assistant.');
-        }
-        refreshChrome();
-      } catch (err) {
-        setMessage(status, 'err', 'Network error. Check your connection and try again.');
-        setMessage(banner, 'err', 'Network error. Check your connection and try again.');
-      } finally {
-        send.disabled = false;
-        doneBtn.disabled = false;
-      }
-    }
-
-    send.addEventListener('click', function () { submit(false); });
-    doneBtn.addEventListener('click', function () { submit(true); });
-    return card;
+    actions.append(respond, switchLabel);
+    body.append(titleLine, detail, meta, actions);
+    row.append(badge, body);
+    return row;
   }
 
-  function render(items) {
-    openList.replaceChildren();
-    doneList.replaceChildren();
+  function render() {
+    const waiting = [];
+    const finished = [];
     items.forEach(function (item) {
-      const card = renderCard(item);
-      if (isDone(item)) doneList.appendChild(card);
-      else openList.appendChild(card);
+      if (isDone(item)) finished.push(item);
+      else waiting.push(item);
     });
-    refreshChrome();
+    waitingList.replaceChildren.apply(waitingList, waiting.map(function (item, index) {
+      return renderRow(item, index + 1, false);
+    }));
+    doneList.replaceChildren.apply(doneList, finished.map(function (item, index) {
+      return renderRow(item, index + 1, true);
+    }));
+    if (waiting.length === 0) summary.textContent = 'Nothing waiting on you';
+    else if (waiting.length === 1) summary.textContent = '1 item waiting on you';
+    else summary.textContent = waiting.length + ' items waiting on you';
+    empty.hidden = waiting.length !== 0;
+    waitingList.hidden = waiting.length === 0;
+    doneSection.hidden = finished.length === 0;
+  }
+
+  async function setDone(item, want) {
+    try {
+      const result = await api('/api/submit', {
+        method: 'POST',
+        body: JSON.stringify({ itemId: item.id, response: '', done: want }),
+      });
+      if (result.status === 401) {
+        showLogin('Your session expired. Enter the passcode again.');
+        return;
+      }
+      if (!result.ok) {
+        setMessage(banner, 'err', (result.data && result.data.error) || 'Could not update that item.');
+        render();
+        return;
+      }
+      const ids = readDone();
+      if (want) ids.add(item.id);
+      else ids.delete(item.id);
+      writeDone(ids);
+      item.done = want;
+      setMessage(banner, 'ok', want ? 'Marked done.' : 'Moved back to Waiting on you.');
+      render();
+    } catch (err) {
+      setMessage(banner, 'err', 'Network error. Check your connection and try again.');
+      render();
+    }
+  }
+
+  function setRecordingUi(on) {
+    recording = on;
+    mic.classList.toggle('recording', on);
+    mic.textContent = on ? 'Stop' : 'Mic';
+    mic.setAttribute('aria-pressed', on ? 'true' : 'false');
+    sheet.classList.toggle('recording', on);
+    recState.hidden = !on;
+  }
+
+  function stopMic() {
+    const session = recognition;
+    recording = false;
+    recognition = null;
+    setRecordingUi(false);
+    sheetInterim.textContent = '';
+    if (session) {
+      session.onend = null;
+      try { session.stop(); } catch (err) { /* already stopped */ }
+    }
+  }
+
+  function startMic() {
+    const Ctor = speechCtor();
+    if (!Ctor) return;
+    stopMic();
+    const session = new Ctor();
+    recognition = session;
+    session.continuous = true;
+    session.interimResults = true;
+    session.lang = 'en-US';
+    const prefix = sheetText.value;
+    setRecordingUi(true);
+    session.onresult = function (event) {
+      let finals = '';
+      let interim = '';
+      for (let i = 0; i < event.results.length; i++) {
+        const piece = event.results[i][0].transcript;
+        if (event.results[i].isFinal) finals += piece;
+        else interim += piece;
+      }
+      const spoken = finals + interim;
+      let value = prefix;
+      if (spoken) {
+        if (prefix && !/\s$/.test(prefix) && !/^\s/.test(spoken)) value += ' ';
+        value += spoken;
+      }
+      sheetText.value = value;
+      sheetInterim.textContent = interim;
+    };
+    session.onerror = function (event) {
+      if (!event || event.error === 'no-speech') return;
+      stopMic();
+      if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
+        setMessage(sheetError, 'err', 'Microphone permission was blocked. Type instead, or use the keyboard microphone key.');
+      }
+    };
+    session.onend = function () {
+      if (recording && recognition === session) {
+        try { session.start(); } catch (err) { stopMic(); }
+      }
+    };
+    try {
+      session.start();
+    } catch (err) {
+      stopMic();
+      setMessage(sheetError, 'err', 'Could not start dictation. Use the keyboard microphone key.');
+    }
+  }
+
+  function syncMic() {
+    const available = !!speechCtor();
+    mic.hidden = !available;
+    micHint.hidden = available;
+  }
+
+  function closeSheet() {
+    stopMic();
+    sheetId = null;
+    sheetRoot.hidden = true;
+    setMessage(sheetError, '', '');
+    sheetInterim.textContent = '';
+  }
+
+  function openSheet(id) {
+    const item = items.find(function (entry) { return entry.id === id; });
+    if (!item) return;
+    stopMic();
+    sheetId = id;
+    sheetTitle.textContent = item.title;
+    sheetText.value = '';
+    alsoDone.checked = isDone(item);
+    setMessage(sheetError, '', '');
+    sheetInterim.textContent = '';
+    syncMic();
+    sheetRoot.hidden = false;
+    sheetText.focus();
+  }
+
+  async function sendSheet() {
+    const item = items.find(function (entry) { return entry.id === sheetId; });
+    if (!item) return;
+    const response = sheetText.value.trim();
+    if (!response) {
+      setMessage(sheetError, 'err', 'Write a response before sending.');
+      sheetText.focus();
+      return;
+    }
+    const markDone = alsoDone.checked;
+    sheetSend.disabled = true;
+    mic.disabled = true;
+    stopMic();
+    try {
+      const result = await api('/api/submit', {
+        method: 'POST',
+        body: JSON.stringify({ itemId: item.id, response: response, done: markDone }),
+      });
+      if (result.status === 401) {
+        showLogin('Your session expired. Enter the passcode again.');
+        return;
+      }
+      if (!result.ok) {
+        setMessage(sheetError, 'err', (result.data && result.data.error) || 'Could not send that response.');
+        return;
+      }
+      const ids = readDone();
+      if (markDone) {
+        ids.add(item.id);
+        item.done = true;
+      } else {
+        ids.delete(item.id);
+        item.done = false;
+      }
+      writeDone(ids);
+      closeSheet();
+      setMessage(banner, 'ok', 'Sent to Tony');
+      render();
+    } catch (err) {
+      setMessage(sheetError, 'err', 'Network error. Check your connection and try again.');
+    } finally {
+      sheetSend.disabled = false;
+      mic.disabled = false;
+    }
   }
 
   async function showApp() {
@@ -195,9 +356,13 @@
       setMessage(banner, 'err', (result.data && result.data.error) || 'Could not load items.');
       return;
     }
-    render(result.data.items || []);
-    const first = openList.querySelector('textarea');
-    if (first) first.focus();
+    items = result.data.items || [];
+    const ids = readDone();
+    items.forEach(function (item) {
+      if (item.done) ids.add(item.id);
+    });
+    writeDone(ids);
+    render();
   }
 
   loginForm.addEventListener('submit', async function (event) {
@@ -224,17 +389,19 @@
   });
 
   logout.addEventListener('click', async function () {
-    try {
-      await api('/api/logout', { method: 'POST', body: '{}' });
-    } catch (err) {
-      /* still return to the lock screen */
-    }
+    closeSheet();
+    try { await api('/api/logout', { method: 'POST', body: '{}' }); } catch (err) { /* still lock the screen */ }
     showLogin('');
   });
 
-  toggleDone.addEventListener('click', function () {
-    showDone = !showDone;
-    refreshChrome();
+  mic.addEventListener('click', function () {
+    if (recording) stopMic();
+    else startMic();
+  });
+  sheetSend.addEventListener('click', sendSheet);
+  backdrop.addEventListener('click', closeSheet);
+  document.addEventListener('keydown', function (event) {
+    if (event.key === 'Escape' && !sheetRoot.hidden) closeSheet();
   });
 
   api('/api/session').then(function (result) {

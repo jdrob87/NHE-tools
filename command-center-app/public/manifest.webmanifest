@@ -1,12 +1,12 @@
 {
-  "name": "NHE Command Center",
-  "short_name": "NHE Command",
-  "description": "Outstanding items, with a reply forwarded to your assistant.",
+  "name": "NHE Team Command Center",
+  "short_name": "NHE Team",
+  "description": "Outstanding items, with a reply forwarded to Tony.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
-  "background_color": "#0b0d10",
-  "theme_color": "#0b0d10",
+  "background_color": "#f6f5f3",
+  "theme_color": "#f6f5f3",
   "lang": "en",
   "icons": [
     {

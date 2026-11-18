@@ -45,8 +45,33 @@ function loadItems() {
     }
     if (seen.has(item.id)) failStartup('ITEMS_JSON has a duplicate id');
     seen.add(item.id);
-    return { id: item.id, title: item.title, detail: item.detail || '' };
+    return {
+      id: item.id,
+      title: item.title,
+      detail: item.detail || '',
+      lead: optionalText(item.lead, 8),
+      meta: optionalText(item.meta, 120),
+      status: optionalStatus(item.status),
+    };
   });
+}
+
+function optionalText(value, max) {
+  if (typeof value === 'number' && Number.isFinite(value)) value = String(value);
+  if (typeof value !== 'string') return '';
+  const trimmed = value.trim();
+  if (!trimmed || trimmed.length > max) return '';
+  return trimmed;
+}
+
+function optionalStatus(status) {
+  if (!status || typeof status !== 'object') return null;
+  const label = optionalText(status.label, 40);
+  if (!label) return null;
+  const tone = typeof status.tone === 'string' ? status.tone.trim().toLowerCase() : '';
+  if (tone === 'warning') return { label: label, tone: 'warning' };
+  if (tone === 'done' || tone === 'success') return { label: label, tone: 'done' };
+  return { label: label, tone: 'neutral' };
 }
 
 function validateConfig() {
@@ -389,16 +414,17 @@ async function handleSubmit(req, res) {
     sendJson(res, 404, { ok: false, error: 'That item is not on the list.' });
     return;
   }
-  if (!body || typeof body.response !== 'string' || !body.response.trim()) {
+  const hasDone = !!(body && typeof body.done === 'boolean');
+  const responseText = body && typeof body.response === 'string' ? body.response.trim() : '';
+  if (!responseText && !hasDone) {
     sendJson(res, 400, { ok: false, error: 'Write a response before sending.' });
     return;
   }
-  const responseText = body.response.trim();
   if (responseText.length > RESPONSE_LIMIT) {
     sendJson(res, 400, { ok: false, error: 'That response is too long.' });
     return;
   }
-  const done = body.done === true;
+  const done = hasDone && body.done === true;
   const payload = JSON.stringify({
     source: 'command-center-phone',
     itemId: item.id,
@@ -408,8 +434,11 @@ async function handleSubmit(req, res) {
     sentAt: new Date().toISOString(),
   });
   await postWebhook(payload);
-  if (done) doneIds.add(item.id);
-  sendJson(res, 200, { ok: true, done: done });
+  if (hasDone) {
+    if (body.done) doneIds.add(item.id);
+    else doneIds.delete(item.id);
+  }
+  sendJson(res, 200, { ok: true, done: doneIds.has(item.id) });
 }
 
 async function route(req, res) {
@@ -458,7 +487,15 @@ async function route(req, res) {
     }
     sendJson(res, 200, {
       items: ITEMS.map(function (item) {
-        return { id: item.id, title: item.title, detail: item.detail, done: doneIds.has(item.id) };
+        return {
+          id: item.id,
+          title: item.title,
+          detail: item.detail,
+          lead: item.lead || null,
+          meta: item.meta || null,
+          status: item.status,
+          done: doneIds.has(item.id),
+        };
       }),
     });
     return;
@@ -494,5 +531,5 @@ process.on('SIGINT', shutdown);
 
 const port = Number(process.env.PORT);
 server.listen(port, '0.0.0.0', function () {
-  console.log('NHE Command Center listening on ' + port);
+  console.log('NHE Team Command Center listening on ' + port);
 });

@@ -1,6 +1,6 @@
-# NHE Command Center
+# NHE Team Command Center
 
-A small phone web app for a team lead. Open it from a home-screen shortcut, read the outstanding items, dictate or type a reply, and send it. The server forwards each reply to an assistant webhook. The browser never sees the webhook address or key.
+A small phone web app for a team lead. Open it from a home-screen shortcut, read the items waiting on you, dictate or type a reply, and send it to Tony. The server forwards each reply to a webhook. The browser never sees the webhook address or key.
 
 This repository is public. Do not commit passcodes, webhook URLs, keys, or real item lists. Those live only in environment variables on the host.
 
@@ -36,11 +36,15 @@ The process listens on `process.env.PORT` and binds `0.0.0.0`. Render sets `PORT
 
 Set the variables below in the Render dashboard. Do not put them in the repo. `PORT` does not need to be set by hand on Render.
 
-Done flags held in server memory reset when the service restarts or spins down. The phone also stores done ids in `localStorage`, so items stay in Sent / done on that device.
+Done flags held in server memory reset when the service restarts or spins down. The phone also stores done ids in `localStorage`, so items stay in Done on that device.
+
+Each item may include optional `lead` (short badge text), `meta` (a gray line such as "Since Nov 16"), and `status` (`{ "label", "tone" }` where tone is `warning`, `done`, or `neutral`). Missing fields are omitted. `items.example.json` shows the shape with fictional rows.
+
+The Done switch posts immediately with an empty `response` and `done` true or false. A reply from the Respond sheet still requires text. Mic dictation uses the browser Web Speech API when `SpeechRecognition` or `webkitSpeechRecognition` exists. Otherwise the mic is hidden and the sheet says to use the keyboard microphone key. iOS Safari needs HTTPS and a tap, and it often ends a session after one phrase. Firefox and most in-app browsers do not expose the API.
 
 ## Home screen
 
-In Safari on the iPhone: Share, Add to Home Screen. The icon is labeled NHE, the document title is NHE Command Center, and `apple-mobile-web-app-capable` opens it full screen. Sign in once. The cookie lasts 90 days.
+In Safari on the iPhone: Share, Add to Home Screen. The icon is labeled NHE, the document title is NHE Team Command Center, and `apple-mobile-web-app-capable` opens it full screen. Sign in once. The cookie lasts 90 days.
 
 ## Environment variables
 
@@ -49,7 +53,7 @@ In Safari on the iPhone: Share, Add to Home Screen. The icon is labeled NHE, the
 | `PORT` | yes on the host | TCP port. Render injects this. |
 | `PASSCODE` | yes | Exact passcode for the login page. Matched in constant time. |
 | `SESSION_SECRET` | yes | HMAC key for the session cookie. At least 16 characters. |
-| `ITEMS_JSON` | no | JSON array of `{id, title, detail}`. Missing or empty means an empty list. Invalid JSON stops startup. |
+| `ITEMS_JSON` | no | JSON array of `{id, title, detail, lead?, meta?, status?}`. Missing or empty means an empty list. Invalid JSON stops startup. |
 | `WEBHOOK_URL` | to send | Where replies are POSTed. `http:` or `https:`. |
 | `WEBHOOK_KEY` | to send | Secret sent with each webhook request. Never sent to the browser. |
 | `WEBHOOK_AUTH_HEADER` | no | Header name for the key. Default `Authorization`. When the name is `Authorization` (any case), the value is `Bearer <key>`. Any other name sends the raw key. |

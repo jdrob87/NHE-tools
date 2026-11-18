@@ -7,10 +7,7 @@ const { spawn } = require('child_process');
 const PASSCODE = 'test-passcode';
 const SESSION_SECRET = 'test-session-secret-not-real';
 const WEBHOOK_KEY = 'whk_test_only_not_a_real_key';
-const ITEMS = [
-  { id: 'fake-1', title: 'Call the example seller', detail: 'Fictional follow-up.' },
-  { id: 'fake-2', title: 'Review the demo offer', detail: 'Not a real property.' },
-];
+const ITEMS = JSON.parse(fs.readFileSync(__dirname + '/items.example.json', 'utf8'));
 
 const failures = [];
 
@@ -214,7 +211,7 @@ async function login(port, passcode) {
 async function testAuthAndList(port, hook) {
   const page = await request(port, 'GET', '/');
   assert(page.status === 200, 'login page returns 200');
-  assert(page.text.includes('NHE Command Center'), 'page title is NHE Command Center');
+  assert(page.text.includes('NHE Team Command Center'), 'page title is NHE Team Command Center');
   assert(page.text.includes('apple-mobile-web-app-capable'), 'page opts into the iOS home-screen app');
   assert(page.text.includes('/manifest.webmanifest'), 'page links the web app manifest');
   assert(page.text.includes('/apple-touch-icon.png'), 'page links the apple touch icon');
@@ -223,7 +220,7 @@ async function testAuthAndList(port, hook) {
 
   const manifest = await request(port, 'GET', '/manifest.webmanifest');
   assert(manifest.status === 200, 'manifest returns 200');
-  assert(manifest.json.name === 'NHE Command Center', 'manifest name is NHE Command Center');
+  assert(manifest.json.name === 'NHE Team Command Center', 'manifest name is NHE Team Command Center');
   assert(manifest.json.display === 'standalone', 'manifest display is standalone');
 
   const svg = await request(port, 'GET', '/icon.svg');
@@ -262,9 +259,13 @@ async function testAuthAndList(port, hook) {
   const cookie = sessionCookie(good);
   const items = await request(port, 'GET', '/api/items', { cookie: cookie });
   assert(items.status === 200, 'signed-in list returns 200');
-  assert(items.json.items.length === 2, 'list returns both sample items');
+  assert(items.json.items.length === ITEMS.length, 'list returns the sample items');
   assert(items.json.items[0].title === 'Call the example seller', 'list renders the first title');
-  assert(items.json.items[0].detail === 'Fictional follow-up.', 'list renders the first detail');
+  assert(items.json.items[0].detail.indexOf('123 Sample Street') !== -1, 'list renders the first detail');
+  assert(items.json.items[0].lead === '1', 'optional lead is returned');
+  assert(items.json.items[0].meta === 'Since Nov 16', 'optional meta is returned');
+  assert(items.json.items[0].status.label === 'Time-sensitive' && items.json.items[0].status.tone === 'warning', 'optional status is returned');
+  assert(items.json.items[2].lead === null, 'a missing lead falls back to null');
   assert(items.json.items.every(function (item) { return item.done === false; }), 'nothing starts done');
   assert(!items.text.includes(WEBHOOK_KEY), 'items JSON does not include the webhook key');
 
@@ -341,10 +342,30 @@ async function testWebhook(port, hook, cookie) {
   const hitsBeforeEmpty = hook.hits.length;
   const empty = await request(port, 'POST', '/api/submit', {
     cookie: cookie,
-    body: { itemId: 'fake-2', response: '   ', done: true },
+    body: { itemId: 'fake-2', response: '   ' },
   });
-  assert(empty.status === 400, 'a blank response is rejected');
+  assert(empty.status === 400, 'a blank response without done is rejected');
   assert(hook.hits.length === hitsBeforeEmpty, 'a blank response does not call the webhook');
+
+  const toggled = await request(port, 'POST', '/api/submit', {
+    cookie: cookie,
+    body: { itemId: 'fake-2', response: '', done: true },
+  });
+  assert(toggled.status === 200 && toggled.json.done === true, 'an empty response is accepted when done is true');
+  const toggleHit = hook.hits[hook.hits.length - 1];
+  assert(toggleHit.json.response === '' && toggleHit.json.done === true, 'the done switch posts an empty response');
+  const markedOff = await request(port, 'GET', '/api/items', { cookie: cookie });
+  assert(markedOff.json.items.find(function (item) { return item.id === 'fake-2'; }).done === true, 'the done switch updates memory');
+
+  const untoggled = await request(port, 'POST', '/api/submit', {
+    cookie: cookie,
+    body: { itemId: 'fake-2', done: false },
+  });
+  assert(untoggled.status === 200 && untoggled.json.done === false, 'an empty response is accepted when done is false');
+  const offHit = hook.hits[hook.hits.length - 1];
+  assert(offHit.json.response === '' && offHit.json.done === false, 'turning done off posts done false');
+  const reopened = await request(port, 'GET', '/api/items', { cookie: cookie });
+  assert(reopened.json.items.find(function (item) { return item.id === 'fake-2'; }).done === false, 'turning the switch off clears memory');
 
   const unknown = await request(port, 'POST', '/api/submit', {
     cookie: cookie,
@@ -524,7 +545,7 @@ async function testUi(port, hook) {
     await ui.send('Page.enable');
     await ui.send('Page.navigate', { url: 'http://127.0.0.1:' + port + '/' });
     const loginText = await ui.waitForText('Unlock');
-    assert(loginText.includes('NHE Command Center'), 'browser shows the login title');
+    assert(loginText.includes('NHE Team Command Center'), 'browser shows the login title');
     assert(!loginText.includes('Call the example seller'), 'browser login does not list items');
     shots.login = await ui.send('Page.captureScreenshot', { format: 'png' });
 
@@ -533,60 +554,109 @@ async function testUi(port, hook) {
     assert(wrongText.includes('That passcode is not right.'), 'browser shows the wrong-passcode error');
 
     await ui.evalJson("document.getElementById('passcode').value = " + JSON.stringify(PASSCODE) + "; document.getElementById('login-form').requestSubmit(); true");
-    const listText = await ui.waitForText('Call the example seller');
+    const listText = await ui.waitForText('3 items waiting on you');
+    assert(listText.includes('Call the example seller'), 'browser renders the first item');
     assert(listText.includes('Review the demo offer'), 'browser renders every open item');
-    assert(listText.includes('Send + done'), 'browser shows Send + done');
-    assert(listText.includes('Fictional follow-up.'), 'browser renders item detail');
+    assert(listText.includes('Waiting on you'), 'browser shows the Waiting on you section');
+    assert(listText.includes('Time-sensitive'), 'browser shows a status pill');
+    assert(listText.includes('Since Nov 16'), 'browser shows the meta line');
+    assert(listText.includes('Respond'), 'browser shows Respond');
+    const badges = await ui.evalJson([
+      '(function () {',
+      '  function badge(id) {',
+      '    const row = document.querySelector(\'#waiting-list [data-id="\' + id + \'"] .badge\');',
+      '    return row ? row.textContent : "";',
+      '  }',
+      '  return { first: badge("fake-1"), third: badge("fake-3") };',
+      '})()',
+    ].join('\n'));
+    assert(badges.first === '1' && badges.third === '3', 'missing lead falls back to a number');
     shots.list = await ui.send('Page.captureScreenshot', { format: 'png' });
 
-    const before = hook.hits.length;
-    await ui.evalJson([
-      '(function () {',
-      '  const card = document.querySelector(\'#open-list [data-id="fake-2"]\');',
-      '  card.querySelector("textarea").value = "Dictated reply for the demo offer";',
-      '  card.querySelector(\'[data-action="send"]\').click();',
-      '  return true;',
-      '})()',
-    ].join('\n'));
-    const sentText = await ui.waitForText('Sent to your assistant.');
-    assert(sentText.includes('Review the demo offer'), 'a plain send keeps the item on the open list');
-    assert(hook.hits.length === before + 1, 'browser send reaches the webhook');
-    const hit = hook.hits[hook.hits.length - 1];
-    assert(hit.json.itemId === 'fake-2' && hit.json.done === false, 'browser send posts the open item');
-    assert(hit.json.response === 'Dictated reply for the demo offer', 'browser send posts the typed response');
-    assert(hit.headers.authorization === 'Bearer ' + WEBHOOK_KEY, 'browser send uses the bearer header');
-
-    await ui.evalJson([
-      '(function () {',
-      '  const card = document.querySelector(\'#open-list [data-id="fake-2"]\');',
-      '  card.querySelector("textarea").value = "Mark the demo offer done";',
-      '  card.querySelector(\'[data-action="done"]\').click();',
-      '  return true;',
-      '})()',
-    ].join('\n'));
-    await ui.waitForText('Sent and marked done.');
-    const placed = await ui.evalJson([
+    await ui.evalJson('document.querySelector(\'#waiting-list [data-id="fake-1"] .respond\').click()');
+    await ui.waitForText('Also mark done');
+    const micState = await ui.evalJson([
       '(function () {',
       '  return {',
-      '    open: !!document.querySelector(\'#open-list [data-id="fake-2"]\'),',
-      '    done: !!document.querySelector(\'#done-list [data-id="fake-2"]\'),',
-      '    heading: document.getElementById("done-heading").textContent,',
-      '    toggle: document.getElementById("toggle-done").textContent,',
-      '    hidden: document.getElementById("done-list").hidden',
+      '    micHidden: document.getElementById("mic").hidden,',
+      '    hintHidden: document.getElementById("mic-hint").hidden,',
+      '    hadApi: !!(window.SpeechRecognition || window.webkitSpeechRecognition)',
       '  };',
       '})()',
     ].join('\n'));
-    assert(placed.open === false && placed.done === true, 'send + done moves the card into Sent / done');
-    assert(placed.heading === 'Sent / done', 'done section heading is Sent / done');
-    assert(placed.toggle === 'Show done' && placed.hidden === true, 'done cards start collapsed behind Show done');
+    if (!micState.hadApi) {
+      assert(micState.micHidden === true && micState.hintHidden === false, 'mic is hidden when speech recognition is missing');
+    }
+    await ui.evalJson('document.getElementById("sheet-backdrop").click()');
+    await ui.evalJson([
+      '(function () {',
+      '  function Mock() {}',
+      '  Mock.prototype.start = function () {',
+      '    const self = this;',
+      '    setTimeout(function () {',
+      '      if (!self.onresult) return;',
+      '      self.onresult({',
+      '        resultIndex: 0,',
+      '        results: [{ 0: { transcript: "Left a fictional voicemail" }, isFinal: false, length: 1 }]',
+      '      });',
+      '    }, 30);',
+      '  };',
+      '  Mock.prototype.stop = function () { if (this.onend) this.onend(); };',
+      '  window.SpeechRecognition = Mock;',
+      '  window.webkitSpeechRecognition = Mock;',
+      '  return true;',
+      '})()',
+    ].join('\n'));
+    await ui.evalJson('document.querySelector(\'#waiting-list [data-id="fake-1"] .respond\').click()');
+    await ui.waitForText('Also mark done');
+    const micShown = await ui.evalJson('document.getElementById("mic").hidden === false && document.getElementById("mic-hint").hidden === true');
+    assert(micShown, 'mic is available when speech recognition exists');
+    await ui.evalJson('document.getElementById("mic").click()');
+    let box = '';
+    const dictationStart = Date.now();
+    while (Date.now() - dictationStart < 2000) {
+      box = await ui.evalJson('document.getElementById("sheet-text").value');
+      if (box.indexOf('Left a fictional voicemail') !== -1) break;
+      await sleep(40);
+    }
+    assert(box.indexOf('Left a fictional voicemail') !== -1, 'interim dictation fills the text box');
+    const dictated = await ui.bodyText();
+    assert(dictated.includes('Listening') && dictated.includes('Stop'), 'recording shows a red listening state and Stop');
+    shots.sheet = await ui.send('Page.captureScreenshot', { format: 'png' });
+    await ui.evalJson('document.getElementById("also-done").checked = false; document.getElementById("mic").click(); true');
 
-    const hiddenText = await ui.bodyText();
-    assert(!hiddenText.includes('Review the demo offer'), 'the finished item is collapsed out of the open list');
-    await ui.evalJson('document.getElementById("toggle-done").click(); true');
-    const shown = await ui.waitForText('Review the demo offer');
-    assert(shown.includes('Sent and marked done.'), 'Show done reveals the finished item');
-    const toggle = await ui.evalJson('document.getElementById("toggle-done").textContent');
-    assert(toggle === 'Hide done', 'the toggle switches to Hide done');
+    const before = hook.hits.length;
+    await ui.evalJson('document.getElementById("sheet-send").click()');
+    const sentText = await ui.waitForText('Sent to Tony');
+    assert(sentText.includes('Call the example seller'), 'a reply keeps the item in Waiting on you');
+    assert(hook.hits.length === before + 1, 'browser send reaches the webhook');
+    const hit = hook.hits[hook.hits.length - 1];
+    assert(hit.json.itemId === 'fake-1' && hit.json.done === false, 'browser send posts the open item');
+    assert(hit.json.response === 'Left a fictional voicemail', 'browser send posts the dictated response');
+    assert(hit.headers.authorization === 'Bearer ' + WEBHOOK_KEY, 'browser send uses the bearer header');
+
+    await ui.evalJson('document.querySelector(\'#waiting-list [data-id="fake-2"] input[type="checkbox"]\').click()');
+    await ui.waitForText('Marked done.');
+    const placed = await ui.evalJson([
+      '(function () {',
+      '  const doneRow = document.querySelector(\'#done-list [data-id="fake-2"]\');',
+      '  return {',
+      '    open: !!document.querySelector(\'#waiting-list [data-id="fake-2"]\'),',
+      '    done: !!doneRow,',
+      '    check: doneRow ? doneRow.querySelector(".badge").textContent : "",',
+      '    strike: doneRow ? getComputedStyle(doneRow.querySelector(".title")).textDecorationLine : "",',
+      '    heading: document.getElementById("done-heading").textContent',
+      '  };',
+      '})()',
+    ].join('\n'));
+    assert(placed.open === false && placed.done === true, 'the Done switch moves the row into Done');
+    assert(placed.heading === 'Done', 'done section heading is Done');
+    assert(placed.check === '\u2713', 'done rows use a check mark');
+    assert(placed.strike === 'none', 'done titles are not struck through');
+    const toggleHit = hook.hits[hook.hits.length - 1];
+    assert(toggleHit.json.itemId === 'fake-2' && toggleHit.json.done === true && toggleHit.json.response === '', 'the switch posts done with an empty response');
+    await ui.evalJson('document.getElementById("done-section").scrollIntoView({ block: "start" })');
+    await sleep(100);
     shots.done = await ui.send('Page.captureScreenshot', { format: 'png' });
 
     const stored = await ui.evalJson('localStorage.getItem("nhe-command-center-done")');
@@ -608,8 +678,8 @@ async function testLocalStorageAfterRestart(ui, port) {
   const afterReload = await ui.evalJson([
     '(function () {',
     '  return {',
-    '    open1: !!document.querySelector(\'#open-list [data-id="fake-1"]\'),',
-    '    open2: !!document.querySelector(\'#open-list [data-id="fake-2"]\'),',
+    '    open1: !!document.querySelector(\'#waiting-list [data-id="fake-1"]\'),',
+    '    open2: !!document.querySelector(\'#waiting-list [data-id="fake-2"]\'),',
     '    done2: !!document.querySelector(\'#done-list [data-id="fake-2"]\')',
     '  };',
     '})()',
